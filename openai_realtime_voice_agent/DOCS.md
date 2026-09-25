@@ -1,7 +1,7 @@
 # OpenAI Realtime 2 Voice Agent — Documentation
 
 This add-on runs an **OpenAI `gpt-realtime-2`** voice session and bridges it to Home
-Assistant control and web search. It is the backend half of a two-part project; the
+Assistant control, device timers and web search. It is the backend half of a two-part project; the
 front half is custom **firmware for the Home Assistant Voice PE** device (see
 [Firmware](#firmware-home-assistant-voice-pe-only) below).
 
@@ -63,7 +63,7 @@ blank to expose all, or trim to just what you use, e.g.:
 **The defaults are the recommended settings** — for a first run you only need the
 API key, the MCP integration (section 3), and ideally your language. The
 Configuration tab is grouped: **🔑 Basics → 🗣️ Model & voice → 💬 Conversation →
-🌐 Web search → 🎚️ Audio → 🏠 Home Assistant → ⚙️ Advanced → 🔍 Debug**, and every
+🌐 Web search → ⏱️ Timers → 🎚️ Audio → 🏠 Home Assistant → ⚙️ Advanced → 🔍 Debug**, and every
 option has plain-language inline help.
 
 | Option | Default | Note |
@@ -80,6 +80,7 @@ option has plain-language inline help.
 | `playback_prebuffer_ms` | `150` | raise to ~250 if you hear crackle; 0 = play immediately |
 | `max_context_messages` | `12` | bounds per-turn token cost |
 | `enable_web_search` | `true` | online lookups; set `false` to disable |
+| `enable_timers` | `true` | device-owned voice timers; needs compatible firmware |
 | `web_search_model` | `gpt-5.5` | best-quality search model; mini/nano are cheaper |
 
 The legacy `server_vad` turn-detection fields live at the bottom of ⚙️ Advanced and
@@ -100,6 +101,14 @@ answer back.
 - Adds ~1–3 s while it searches (the device shows "thinking").
 - If the model name is rejected, the assistant just says it couldn't search — it
   won't crash the session, so you can change `web_search_model` and retry.
+
+**Voice timers:** With `enable_timers` on (the default) and compatible Voice PE
+firmware, ask to set a timer for up to 24 hours, list timers with remaining time,
+or cancel one by name or all at once. Timers run and ring on the device even if
+the WebSocket disconnects; they do not survive a device reboot. A timer is only
+confirmed after the device acknowledges it. Older firmware ignores timer requests,
+so after three seconds the assistant reports that the timer was not confirmed.
+When several timers share a name, the assistant asks which one to cancel.
 
 ## 6. Options reference & tuning
 
@@ -142,9 +151,9 @@ The add-on log shows each turn: `🗣️ user:` (when transcription language is 
 
 ## Known limitations
 
-- **No voice timers or alarms yet.** Setting a timer by voice isn't supported (the
-  official Home Assistant timer intent isn't wired up). Everything else — lights,
-  switches, scenes, climate, and questions — works.
+- **Voice timers require compatible firmware; voice alarms are not supported.**
+  Timers belong to the device rather than Home Assistant timer entities. Older
+  firmware will not confirm timer commands and no timer is claimed as set.
 - **A brief reconnect about once an hour.** OpenAI limits a realtime session to
   60 minutes. The add-on refreshes proactively during a quiet moment, so you'll
   rarely notice it, but a reconnect can occasionally cause a ~1–2 second pause.

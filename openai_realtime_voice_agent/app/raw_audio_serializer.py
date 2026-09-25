@@ -50,6 +50,8 @@ class RawAudioSerializer(FrameSerializer):
         # Resets the dangling-VAD guard's "speech since wake" tracker. Set by
         # WebSocketHandler.build_pipeline.
         self._on_wake = None
+        # Timer control frames share the TEXT channel with wake/flush.
+        self._on_timer_message = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
@@ -66,6 +68,10 @@ class RawAudioSerializer(FrameSerializer):
     def set_wake_handler(self, handler):
         """Register the async no-arg callback fired on a device 'wake'."""
         self._on_wake = handler
+
+    def set_timer_message_handler(self, handler):
+        """Register the callback for parsed device timer control messages."""
+        self._on_timer_message = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -133,6 +139,11 @@ class RawAudioSerializer(FrameSerializer):
                         await self._on_wake()
                     except Exception as e:
                         logger.warning(f"⚠️ device wake handler failed: {e!r}")
+            elif isinstance(data, dict) and data.get("type") in (
+                "timer_ack", "timer_state", "timer_finished"
+            ):
+                if self._on_timer_message is not None:
+                    self._on_timer_message(data)
             # interrupt / ping / start / other control frames: nothing to inject.
             return None
 
@@ -168,4 +179,3 @@ class RawAudioSerializer(FrameSerializer):
         # For other frame types, return empty bytes (not serialized)
         logger.debug(f"📤 Serializing non-audio frame: {type(frame).__name__}, returning empty bytes")
         return b""
-

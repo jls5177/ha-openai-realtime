@@ -2,6 +2,15 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.3
+
+- Add device-owned voice timer tools to set, list and cancel timers (by name, id
+  or all), with remaining times and a three-second acknowledgement timeout.
+- Sync timer state after device reconnects; unconfirmed or unsupported requests
+  report failure rather than claiming a timer was set.
+- Add `enable_timers` (on by default). Requires compatible Voice PE firmware;
+  timers ring locally and do not survive a device reboot.
+
 ## 0.6.1-sat1.2
 
 - Include `interrupt_response` (boolean) in every device `hello` so firmware

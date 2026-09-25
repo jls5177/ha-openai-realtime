@@ -24,6 +24,9 @@ INTERRUPT_RESPONSE=$(bashio::config 'interrupt_response')
 ENABLE_WEB_SEARCH=$(bashio::config 'enable_web_search')
 WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
 
+# --- ⏱️ Timers ---
+ENABLE_TIMERS=$(bashio::config 'enable_timers')
+
 # --- 🎚️ Audio ---
 PLAYBACK_PREBUFFER_MS=$(bashio::config 'playback_prebuffer_ms')
 NOISE_REDUCTION=$(bashio::config 'noise_reduction')
@@ -64,6 +67,7 @@ export PHASE_IDLE_DEBOUNCE_MS
 export INTERRUPT_RESPONSE
 export ENABLE_WEB_SEARCH
 export WEB_SEARCH_MODEL
+export ENABLE_TIMERS
 export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION
 export LONGLIVED_TOKEN

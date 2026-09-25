@@ -22,6 +22,7 @@ from app.session_manager import SessionManager
 from app.audio_recording_service import AudioRecordingService
 from app.phase_emitter import PhaseEmitter
 from app.transcript_logger import TranscriptLogger
+from app.timer_tool import TimerBridge
 
 logger = logging.getLogger(__name__)
 
@@ -381,6 +382,7 @@ class WebSocketHandler:
         # Connected device websockets, used to push va_client control/phase
         # messages as TEXT frames (the audio path uses the binary serializer).
         self._websockets: set = set()
+        self.timer_bridge = TimerBridge(self)
     
     def create_transport(self) -> WebsocketServerTransport:
         """
@@ -396,6 +398,7 @@ class WebSocketHandler:
         # resamples in/out to the 24 kHz pipeline rate below.
         serializer = RawAudioSerializer()
         self._serializer = serializer
+        serializer.set_timer_message_handler(self.timer_bridge.handle_message)
 
         # Create WebsocketServerTransport with WebsocketServerParams
         # The transport will start its own server automatically
@@ -796,6 +799,7 @@ class WebSocketHandler:
             logger.info(f"🔗 New WebSocket connection from IP: {client_id}")
             # Track the raw connection so we can push phase/control TEXT frames.
             self._websockets.add(websocket)
+            self.timer_bridge.connected(websocket)
             if self._phase_emitter is not None:
                 self._phase_emitter.reset_user_speaking()
             # Handshake ack expected by the va_client protocol (server -> device
@@ -822,6 +826,7 @@ class WebSocketHandler:
         async def on_client_disconnected(transport: WebsocketServerTransport, websocket, *args, **kwargs):
             """Handle client disconnection."""
             self._websockets.discard(websocket)
+            self.timer_bridge.disconnected(websocket)
             if self._phase_emitter is not None:
                 self._phase_emitter.reset_user_speaking()
             client_id = self.extract_client_id(websocket)
@@ -844,7 +849,11 @@ class WebSocketHandler:
                 try:
                     data = json.loads(message)
                     message_type = data.get("type")
-                    
+
+                    if message_type in ("timer_ack", "timer_state", "timer_finished"):
+                        self.timer_bridge.handle_message(data)
+                        return
+
                     if message_type == "interrupt":
                         logger.info(f"🛑 Interrupt received from client {client_id}")
                         

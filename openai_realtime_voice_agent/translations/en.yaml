@@ -133,6 +133,15 @@ configuration:
       Only used when Search model is set to "custom". Any model that supports
       OpenAI's web_search tool. (Hidden by default.)
 
+  # --- ⏱️ Timers ---
+  enable_timers:
+    name: "⏱️ Timers · Voice timers"
+    description: >-
+      Let the assistant set, list and cancel timers on the connected voice device.
+      Requires compatible firmware with timer support; older firmware does not
+      acknowledge requests, so the assistant reports failure instead of claiming
+      a timer was set. On by default.
+
   # --- 🎚️ Audio ---
   playback_prebuffer_ms:
     name: "🎚️ Audio · Playback buffer (ms)"

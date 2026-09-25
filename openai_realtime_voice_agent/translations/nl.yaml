@@ -137,6 +137,15 @@ configuration:
       Alleen gebruikt als Zoekmodel op "custom" staat. Elk model dat OpenAI's
       web_search-tool ondersteunt. (Standaard verborgen.)
 
+  # --- ⏱️ Timers ---
+  enable_timers:
+    name: "⏱️ Timers · Spraaktimers"
+    description: >-
+      Laat de assistent timers instellen, opvragen en annuleren op het verbonden
+      spraakapparaat. Vereist firmware met timerondersteuning; oudere firmware
+      bevestigt geen verzoeken en de assistent meldt dan een fout in plaats van
+      te beweren dat een timer is ingesteld. Standaard aan.
+
   # --- 🎚️ Audio ---
   playback_prebuffer_ms:
     name: "🎚️ Audio · Afspeelbuffer (ms)"

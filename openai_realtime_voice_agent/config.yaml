@@ -1,5 +1,5 @@
 name: OpenAI Realtime 2 Voice Agent
-version: "0.6.1-sat1.2"
+version: "0.6.1-sat1.3"
 slug: openai_realtime_voice_agent
 description: Talk to your home with OpenAI gpt-realtime-2 — a voice agent for the Home Assistant Voice PE, with live device control and web search.
 url: https://github.com/xandervanerven/ha-openai-realtime
@@ -17,7 +17,7 @@ homeassistant_api: true
 # ----------------------------------------------------------------------------
 # Options are ORDERED for the Configuration tab (HA renders them in this order)
 # and pseudo-grouped via name prefixes in translations/{en,nl}.yaml:
-#   🔑 Basics → 🗣️ Model & voice → 💬 Conversation → 🌐 Web search → 🎚️ Audio
+#   🔑 Basics → 🗣️ Model & voice → 💬 Conversation → 🌐 Web search → ⏱️ Timers → 🎚️ Audio
 #   → 🏠 Home Assistant → ⚙️ Advanced → 🔍 Debug
 # User-facing help lives in translations/, not here — keep comments dev-facing.
 #
@@ -53,7 +53,10 @@ options:
     naturally, e.g. "The bedroom lamp is on now" or "Done, the light is off".
     BEHAVIOR: Carry out requested actions immediately with your tools and never
     guess. If you are unsure which device, room, or action is meant, ask a short
-    clarifying question first. If something fails, briefly say what went wrong.
+    clarifying question first. Use set_timer, cancel_timer and list_timers for
+    voice timers on the device, not Home Assistant timer entities. Only confirm
+    a timer action when the device confirms it; if a timer name is ambiguous,
+    ask which timer the user means. If something fails, briefly say what went wrong.
   transcription_language: ""
 
   # --- 🗣️ Model & voice ---
@@ -87,6 +90,9 @@ options:
   # --- 🌐 Web search ---
   enable_web_search: true
   web_search_model: "gpt-5.5"
+
+  # --- ⏱️ Timers ---
+  enable_timers: true
 
   # --- 🎚️ Audio ---
   # 150 (not 0): cushions WS jitter so the speaker doesn't run dry mid-word
@@ -133,6 +139,8 @@ schema:
   enable_web_search: bool
   web_search_model: "list(gpt-5-nano|gpt-5.4-nano|gpt-5-mini|gpt-5.4-mini|gpt-5|gpt-5.4|gpt-5.5|custom)"
   web_search_model_custom: str?
+  # --- ⏱️ Timers ---
+  enable_timers: bool
   # --- 🎚️ Audio ---
   playback_prebuffer_ms: int(0,2000)
   noise_reduction: "list(off|near_field|far_field)"

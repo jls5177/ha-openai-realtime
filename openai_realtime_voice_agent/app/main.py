@@ -14,6 +14,7 @@ from app.mcp_service import HomeAssistantMCPService
 from app.phase_emitter import TURN_LIVENESS
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
 from app.web_search_tool import get_web_search_tool_definition, create_web_search_tool_handler
+from app.timer_tool import get_timer_tool_definitions, create_timer_tool_handler
 from app.audio_recording_service import AudioRecordingService
 from app.session_manager import SessionManager
 from app.websocket_handler import WebSocketHandler
@@ -290,7 +291,12 @@ class Application:
         )
 
         # Get instructions with default
-        instructions = os.environ.get("INSTRUCTIONS", "You are the Home Assistant Voice Agent and can control the Smart Home.")
+        instructions = os.environ.get(
+            "INSTRUCTIONS",
+            "You are the Home Assistant Voice Agent and can control the Smart Home. "
+            "Use set_timer, cancel_timer and list_timers for device timers. "
+            "Only confirm timer actions when the device confirms them.",
+        )
 
         # OpenAI Realtime model + voice. These are dropdowns in the add-on UI with
         # a "custom" sentinel + a sibling *_CUSTOM free-text field; _resolve_choice
@@ -330,6 +336,7 @@ class Application:
         # configurable so a different price/quality — or a renamed model — needs
         # no code change.
         enable_web_search = os.environ.get("ENABLE_WEB_SEARCH", "true").lower() == "true"
+        enable_timers = os.environ.get("ENABLE_TIMERS", "true").strip().lower() == "true"
         web_search_model = _resolve_choice(
             "WEB_SEARCH_MODEL", "WEB_SEARCH_MODEL_CUSTOM", "gpt-5.5"
         )
@@ -462,6 +469,7 @@ class Application:
         self.mcp_tool_allowlist = mcp_tool_allowlist
         self.mcp_client = mcp_client
         self.enable_web_search = enable_web_search
+        self.enable_timers = enable_timers
         self.web_search_model = web_search_model
 
         logger.info("✅ Application initialized - ready to accept WebSocket connections")
@@ -541,6 +549,8 @@ class Application:
             # a secondary OpenAI Responses web_search call in the handler.
             if self.enable_web_search:
                 all_tools.append(get_web_search_tool_definition())
+            if self.enable_timers:
+                all_tools.extend(get_timer_tool_definitions())
 
             # Get MCP tool definitions if available
             mcp_tools_schema = None
@@ -685,6 +695,14 @@ class Application:
                     create_web_search_tool_handler(self.openai_api_key, self.web_search_model),
                 )
                 logger.info(f"✅ Registered web_search tool handler (model={self.web_search_model})")
+
+            if self.enable_timers:
+                for definition in get_timer_tool_definitions():
+                    name = definition["name"]
+                    self.openai_service.register_function(
+                        name, create_timer_tool_handler(self.websocket_handler.timer_bridge, name)
+                    )
+                logger.info("✅ Registered device timer tool handlers")
             
             # Register MCP tool handlers if available
             if self.mcp_client and mcp_tools_schema:
