@@ -109,6 +109,13 @@ configuration:
       zinnen en tijdens smart-home-acties, zodat de LED en het "stop"-woord
       het hele antwoord blijven werken. 1500 is een goede standaard; verhoog
       als het apparaat midden in lange antwoorden al op rust springt.
+  interrupt_response:
+    name: "💬 Gesprek · Handsfree onderbreken"
+    description: >-
+      Laat je stem de assistent onderbreken terwijl die spreekt. Standaard uit:
+      echo uit de speaker kan antwoorden voortijdig afkappen. Vereist
+      apparaatfirmware met barge_in ingeschakeld en goede akoestische
+      echo-onderdrukking (AEC).
 
   # --- 🌐 Websearch ---
   enable_web_search:

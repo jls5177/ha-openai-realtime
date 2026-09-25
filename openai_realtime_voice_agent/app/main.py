@@ -426,6 +426,7 @@ class Application:
             port=websocket_port,
             session_manager=self.session_manager,
             audio_recording_service=self.audio_recording_service,
+            interrupt_response=interrupt_response,
             follow_up_ms=follow_up_ms,
             follow_up_open_delay_ms=follow_up_open_delay_ms,
             wake_open_delay_ms=wake_open_delay_ms,

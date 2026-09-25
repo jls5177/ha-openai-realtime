@@ -334,6 +334,7 @@ class WebSocketHandler:
         port: int = 8080,
         session_manager: Optional[SessionManager] = None,
         audio_recording_service: Optional[AudioRecordingService] = None,
+        interrupt_response: bool = False,
         follow_up_ms: int = 0,
         follow_up_open_delay_ms: int = 700,
         wake_open_delay_ms: int = 700,
@@ -347,6 +348,7 @@ class WebSocketHandler:
             port: Port to listen on
             session_manager: Session manager instance
             audio_recording_service: Audio recording service instance
+            interrupt_response: Whether hands-free barge-in is enabled
             follow_up_ms: How long (ms) the device should keep the mic open
                 after a reply so the user can answer without a wake word. Sent to
                 the device in the `hello` handshake. 0 = turn-based (no window).
@@ -361,6 +363,7 @@ class WebSocketHandler:
         self.port = port
         self.session_manager = session_manager
         self.audio_recording_service = audio_recording_service
+        self.interrupt_response = interrupt_response
         self.follow_up_ms = max(0, int(follow_up_ms))
         self.follow_up_open_delay_ms = max(0, int(follow_up_open_delay_ms))
         self.wake_open_delay_ms = max(0, int(wake_open_delay_ms))
@@ -459,7 +462,9 @@ class WebSocketHandler:
         # idle through PhaseEmitter.force_idle() (consistent phase state +
         # racing-`thinking` suppression); it is APPENDED near the end of the
         # pipeline below, before transport.output().
-        phase_emitter = PhaseEmitter(send_phase=self.broadcast_phase)
+        phase_emitter = PhaseEmitter(
+            send_phase=self.broadcast_phase, interrupt_response=self.interrupt_response
+        )
 
         pipeline_components = [
             transport.input(),
@@ -888,4 +893,3 @@ class WebSocketHandler:
                     await self.transport.stop()
             except Exception as e:
                 logger.warning(f"⚠️ Error stopping transport: {e}")
-

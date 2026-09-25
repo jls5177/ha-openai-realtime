@@ -15,7 +15,8 @@ Mapping:
     UserStartedSpeakingFrame  -> listening   (server VAD heard the user)
     UserStoppedSpeakingFrame  -> thinking    (generating a response)
     BotStartedSpeakingFrame   -> replying    (TTS audio is playing)
-    BotStoppedSpeakingFrame   -> idle, but DEBOUNCED (see below)
+    BotStoppedSpeakingFrame   -> idle, but DEBOUNCED (see below);
+                                 ignored while a barge-in user is speaking
 
 IMPORTANT — idle debounce:
     OpenAI Realtime TTS arrives in segments (per sentence, and around tool
@@ -119,7 +120,8 @@ class PhaseEmitter(FrameProcessor):
     # How often to log that we're deliberately waiting on a running tool.
     INFLIGHT_LOG_EVERY_S = 30.0
 
-    def __init__(self, send_phase, idle_debounce_s: float = None, **kwargs):
+    def __init__(self, send_phase, idle_debounce_s: float = None,
+                 interrupt_response: bool = False, **kwargs):
         """
         Args:
             send_phase: async callable(value: str) that delivers the phase to
@@ -129,9 +131,12 @@ class PhaseEmitter(FrameProcessor):
                 PHASE_IDLE_DEBOUNCE_MS env var (1500 ms) — long enough to bridge
                 the inter-sentence / tool-call gaps in OpenAI Realtime TTS so the
                 LED and the "stop" wake word stay active for the whole answer.
+            interrupt_response: whether the mic stays open during a reply.
         """
         super().__init__(**kwargs)
         self._send_phase = send_phase
+        self._interrupt_response = interrupt_response
+        self._user_speaking = False
         if idle_debounce_s is None:
             try:
                 idle_debounce_s = float(os.environ.get("PHASE_IDLE_DEBOUNCE_MS", "1500")) / 1000.0
@@ -198,9 +203,8 @@ class PhaseEmitter(FrameProcessor):
         # turn's "listening" then leaves the device muted and the reply is dropped
         # (observed live 2026-06-14: rapid stop/wake testing → web-search answer
         # silently suppressed). A redundant "listening" is idempotent on the
-        # device (re-lifts suppress, re-opens the mic gate; the barge-in cut-over
-        # is a no-op because the mic is gated during a reply so a real
-        # UserStartedSpeaking never coincides with queued TTS).
+        # device (re-lifts suppress, re-opens the mic gate); with barge-in on,
+        # the same listening transition also flushes queued TTS.
         if value == self._current and value != "listening":
             return
         self._current = value
@@ -229,6 +233,8 @@ class PhaseEmitter(FrameProcessor):
         try:
             await asyncio.sleep(self._idle_debounce_s)
         except asyncio.CancelledError:
+            return
+        if self._interrupt_response and (self._user_speaking or self._current == "listening"):
             return
         # A tool (web search, MCP call) can still be running when the filler
         # reply's debounce expires — the turn isn't over, the model is
@@ -283,6 +289,8 @@ class PhaseEmitter(FrameProcessor):
         await super().process_frame(frame, direction)
 
         if isinstance(frame, UserStartedSpeakingFrame):
+            if self._interrupt_response:
+                self._user_speaking = True
             self._suppress_thinking = False
             # A: a genuine utterance has begun this turn → not a dangling VAD,
             # and the kill-window must NOT cancel THIS turn's response.
@@ -293,6 +301,8 @@ class PhaseEmitter(FrameProcessor):
             self._cancel_watchdog()
             await self._emit("listening")
         elif isinstance(frame, UserStoppedSpeakingFrame):
+            if self._interrupt_response:
+                self._user_speaking = False
             self._cancel_pending_idle()
             if self._current == "replying":
                 # C: the bot is already replying. With barge_in:false the mic is
@@ -321,11 +331,14 @@ class PhaseEmitter(FrameProcessor):
             self._suppress_thinking = False
             self._cancel_pending_idle()
             self._cancel_watchdog()
-            await self._emit("replying")
+            if not (self._interrupt_response and self._user_speaking):
+                await self._emit("replying")
         elif isinstance(frame, BotStoppedSpeakingFrame):
             # Don't go idle immediately — TTS comes in segments. Only emit idle
             # if the bot stays silent for the debounce window.
             self._cancel_pending_idle()
-            self._idle_task = asyncio.create_task(self._emit_idle_after_debounce())
+            if not (self._interrupt_response and
+                    (self._user_speaking or self._current == "listening")):
+                self._idle_task = asyncio.create_task(self._emit_idle_after_debounce())
 
         await self.push_frame(frame, direction)
