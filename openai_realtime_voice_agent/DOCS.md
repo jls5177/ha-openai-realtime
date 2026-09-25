@@ -76,6 +76,7 @@ option has plain-language inline help.
 | `follow_up_open_delay_ms` | `700` | echo guard before the follow-up mic opens; lower = snappier but risks ghost turns |
 | `wake_open_delay_ms` | `700` | the same echo guard right after the wake chime; lower = snappier wake but risks a ghost turn |
 | `vad_eagerness` | `low` | waits longest before deciding you're done talking |
+| `interrupt_response` | `false` | hands-free barge-in; needs firmware `barge_in` and good AEC |
 | `playback_prebuffer_ms` | `150` | raise to ~250 if you hear crackle; 0 = play immediately |
 | `max_context_messages` | `12` | bounds per-turn token cost |
 | `enable_web_search` | `true` | online lookups; set `false` to disable |
@@ -115,6 +116,16 @@ Every option has a description on the **Configuration** tab. The ones worth know
   into the fresh follow-up mic and become a ghost turn (the assistant "answers
   nobody" or repeats itself); raise the prebuffer if you hear crackle at the
   start of replies.
+- **`interrupt_response`** enables hands-free barge-in: OpenAI's server VAD may
+  cut off the assistant's reply when you speak over it, and the device switches
+  to listening (flushing queued TTS). Leave it `false` unless the Voice PE
+  firmware has `barge_in` enabled and good acoustic echo cancellation (AEC);
+  otherwise the speaker's own audio may interrupt the reply. With this option
+  off, the device "stop" wake word or center button still interrupts replies.
+- **`enable_recording`** saves input/output WAV files in the add-on's
+  `recordings/` directory for debugging. Files start when a device connects
+  and are updated roughly once per second while recording; leave it off
+  unless troubleshooting.
 
 ## 7. Reading the logs
 

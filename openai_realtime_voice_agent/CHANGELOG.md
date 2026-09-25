@@ -2,6 +2,21 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.1
+
+- Reuse the realtime service bound to the running pipeline on device connects,
+  so disconnect context caching, manual interrupts, and in-place reconnects
+  all address the live session.
+- Repair optional debug WAV recording: attach recorders before building the
+  handler, create files only when a device connects, and refresh WAV headers
+  roughly once per second instead of flushing every audio frame.
+- Expose opt-in hands-free barge-in (`interrupt_response`, default `false`).
+  During a barge-in, late bot speech frames no longer return the device to idle
+  while the user is still speaking. Requires firmware `barge_in` and good AEC.
+
+Backend fixes hand-ported from [kyvaith/ha-openai-realtime](https://github.com/kyvaith/ha-openai-realtime)
+by Tomasz Witke (981dce2, ba8fa91, 0d210a8, 3dba292, ec77a70, c5481de).
+
 ## 0.6.0
 
 > ⚠️ **This update has two parts — please update both:**
