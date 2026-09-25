@@ -2,6 +2,15 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.4
+
+- Timer ids use a random per-process prefix and skip ids already on the device,
+  so an add-on restart can no longer replace a timer that survived on the device.
+- When a set or cancel request is sent but never acknowledged (timeout or
+  disconnect), report an `uncertain` result that tells the assistant to check
+  `list_timers` before retrying, instead of a definite failure that could lead
+  to a duplicate timer.
+
 ## 0.6.1-sat1.3
 
 - Add device-owned voice timer tools to set, list and cancel timers (by name, id

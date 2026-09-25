@@ -102,12 +102,14 @@ answer back.
 - If the model name is rejected, the assistant just says it couldn't search — it
   won't crash the session, so you can change `web_search_model` and retry.
 
-**Voice timers:** With `enable_timers` on (the default) and compatible Voice PE
-firmware, ask to set a timer for up to 24 hours, list timers with remaining time,
+**Voice timers:** With `enable_timers` on (the default) and compatible firmware (such as
+the Satellite1 realtime variant), ask to set a timer for up to 24 hours, list timers with remaining time,
 or cancel one by name or all at once. Timers run and ring on the device even if
 the WebSocket disconnects; they do not survive a device reboot. A timer is only
 confirmed after the device acknowledges it. Older firmware ignores timer requests,
 so after three seconds the assistant reports that the timer was not confirmed.
+If a request was sent but the acknowledgement was lost, the assistant checks the
+timer list before retrying rather than creating a duplicate.
 When several timers share a name, the assistant asks which one to cancel.
 
 ## 6. Options reference & tuning

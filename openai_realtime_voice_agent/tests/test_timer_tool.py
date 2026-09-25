@@ -216,3 +216,38 @@ def test_tool_definitions_and_model_result_shape():
         assert not (await bridge.set_timer({"duration_seconds": True}))["success"]
 
     asyncio.run(scenario())
+
+
+def test_timer_ids_avoid_prior_process_and_known_timers(monkeypatch):
+    async def scenario():
+        bridge, _, device, _ = setup()
+        monkeypatch.setattr(timer_module, "_ID_PREFIX", "abc")
+        monkeypatch.setattr(timer_module, "_TIMER_IDS", iter([1, 2]))
+        bridge.timers = [timer("tabc1", "Pasta")]
+        task = asyncio.create_task(bridge.set_timer({"minutes": 5}))
+        await asyncio.sleep(0)
+        assert device.sent[0]["id"] == "tabc2"
+        assert device.sent[0]["id"] != "t1"
+        await device.ack(device.sent[0], [timer("tabc1", "Pasta"), timer("tabc2", "")])
+        assert (await task)["success"]
+
+    asyncio.run(scenario())
+
+
+def test_unconfirmed_mutation_is_reported_as_uncertain(monkeypatch):
+    async def scenario():
+        bridge, _, device, handler = setup()
+        monkeypatch.setattr(timer_module, "ACK_TIMEOUT_S", 0.01)
+        started = await bridge.set_timer({"minutes": 1})
+        assert not started["success"] and started["uncertain"]
+        assert "list_timers" in started["error"]
+        listed = await bridge.list_timers()
+        assert not listed["success"] and "uncertain" not in listed
+        monkeypatch.setattr(timer_module, "ACK_TIMEOUT_S", 1.0)
+        cancel = asyncio.create_task(bridge.cancel_timer({"all": True}))
+        await asyncio.sleep(0)
+        bridge.disconnected(device)
+        result = await cancel
+        assert not result["success"] and result["uncertain"]
+
+    asyncio.run(scenario())

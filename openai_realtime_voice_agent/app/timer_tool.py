@@ -3,6 +3,7 @@ import asyncio
 import itertools
 import json
 import logging
+import secrets
 from typing import Any, TYPE_CHECKING
 
 from websockets.exceptions import ConnectionClosed
@@ -13,9 +14,16 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Random per-process prefix so ids never collide with timers the device kept
+# from a previous add-on process (the device treats a known id as a replace).
+_ID_PREFIX = secrets.token_hex(3)
 _TIMER_IDS = itertools.count(1)
 _REQUEST_IDS = itertools.count(1)
 ACK_TIMEOUT_S = 3.0
+UNCERTAIN_MESSAGE = (
+    "The device may have applied this request but did not confirm it. "
+    "Call list_timers to check before retrying."
+)
 
 
 def get_timer_tool_definitions() -> list[dict[str, Any]]:
@@ -62,6 +70,10 @@ def get_timer_tool_definitions() -> list[dict[str, Any]]:
 
 def _failure(message: str) -> dict[str, Any]:
     return {"success": False, "error": message}
+
+
+def _uncertain(message: str) -> dict[str, Any]:
+    return {**_failure(message), "uncertain": True}
 
 
 def _duration(arguments: dict[str, Any]) -> int:
@@ -139,14 +151,21 @@ class TimerBridge:
         if not future.done():
             future.set_result(data)
 
-    async def _request(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def _new_timer_id(self) -> str:
+        known = {timer["id"] for timer in self.timers}
+        while True:
+            timer_id = f"t{_ID_PREFIX}{next(_TIMER_IDS):x}"
+            if timer_id not in known:
+                return timer_id
+
+    async def _request(self, payload: dict[str, Any], mutating: bool = False) -> dict[str, Any]:
         sockets = list(self._handler._websockets)
         if not sockets:
             return _failure("No voice device connected.")
         if len(sockets) != 1:
             return _failure("Multiple voice devices connected; timer target is unclear.")
         socket = sockets[0]
-        request_id = f"r{next(_REQUEST_IDS):x}"
+        request_id = f"r{_ID_PREFIX}{next(_REQUEST_IDS):x}"
         payload = {"request_id": request_id, **payload}
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = (future, socket)
@@ -158,6 +177,8 @@ class TimerBridge:
             ack = await asyncio.wait_for(send_and_wait(), ACK_TIMEOUT_S)
         except asyncio.TimeoutError:
             logger.warning("Device did not acknowledge %s (%s)", payload["type"], request_id)
+            if mutating:
+                return _uncertain(UNCERTAIN_MESSAGE)
             return _failure("Device did not confirm timer request (timed out).")
         except (ConnectionClosed, OSError, RuntimeError) as exc:
             logger.warning("Could not send %s to device: %r", payload["type"], exc)
@@ -165,6 +186,8 @@ class TimerBridge:
         finally:
             self._pending.pop(request_id, None)
         if ack is None:
+            if mutating:
+                return _uncertain(UNCERTAIN_MESSAGE)
             return _failure("Device disconnected before confirming timer request.")
         if not ack["ok"]:
             error = ack.get("error", "unknown")
@@ -180,11 +203,11 @@ class TimerBridge:
         name = arguments.get("name", "")
         if not isinstance(name, str):
             return _failure("Timer name must be text.")
-        timer_id = f"t{next(_TIMER_IDS):x}"
+        timer_id = self._new_timer_id()
         result = await self._request({
             "type": "timer_start", "id": timer_id,
             "name": name.strip(), "duration_s": duration,
-        })
+        }, mutating=True)
         if result["success"]:
             result["message"] = "Timer set."
         return result
@@ -222,7 +245,7 @@ class TimerBridge:
         payload = {"type": "timer_cancel", "all": True} if all_timers else {
             "type": "timer_cancel", "id": timer_id.strip()
         }
-        result = await self._request(payload)
+        result = await self._request(payload, mutating=True)
         if result["success"]:
             result["message"] = "Timer(s) cancelled."
         return result
