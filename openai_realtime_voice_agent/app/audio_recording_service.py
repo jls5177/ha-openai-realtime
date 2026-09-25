@@ -86,8 +86,6 @@ class AudioRecordingService:
         """Initialize audio recording components."""
         # Create audio recorder
         self.audio_recorder = AudioRecorder(output_dir=self.output_dir)
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        self.audio_recorder.start_recording(client_id=f"session_{timestamp}")
         
         # Create audio frame recorders for input and output
         self.input_recorder = AudioFrameRecorder(
@@ -149,4 +147,3 @@ class AudioRecordingService:
         if self.audio_recorder:
             self.audio_recorder.stop_recording()
             self.audio_recorder = None
-
