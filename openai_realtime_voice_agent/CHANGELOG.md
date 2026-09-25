@@ -2,6 +2,17 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.2
+
+- Include `interrupt_response` (boolean) in every device `hello` so firmware
+  that supports the handshake can enable hands-free barge-in when configured.
+- Clear stale user-speaking state on wake, flush, device interrupt, forced idle,
+  and device connect/disconnect, so a cancelled utterance cannot suppress
+  subsequent replying or idle phases.
+- Send `{"type":"audio_done"}` on bot speech end, before the debounced idle
+  phase, to let supporting firmware finish buffered playback promptly. Older
+  firmware ignores this unrecognized control message.
+
 ## 0.6.1-sat1.1
 
 - Reuse the realtime service bound to the running pipeline on device connects,

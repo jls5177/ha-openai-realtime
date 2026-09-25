@@ -119,3 +119,56 @@ def test_debounce_does_not_override_listening(phases):
         assert sent == ["listening"]
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("boundary", ["wake", "forced_idle", "interrupt", "flush", "connect", "disconnect"])
+def test_turn_boundaries_clear_speaking_and_allow_next_reply(phases, boundary):
+    module, frames = phases
+
+    async def scenario():
+        sent = []
+
+        async def send_phase(value):
+            sent.append(value)
+
+        emitter = module.PhaseEmitter(send_phase, idle_debounce_s=0.01,
+                                      interrupt_response=True)
+        await emitter.process_frame(frames.UserStartedSpeakingFrame(), None)
+        assert emitter._user_speaking
+        if boundary in ("wake", "flush"):
+            emitter.note_wake()
+        elif boundary == "forced_idle":
+            await emitter.force_idle("test")
+        else:
+            emitter.reset_user_speaking()
+        assert not emitter._user_speaking
+
+        await emitter.process_frame(frames.BotStartedSpeakingFrame(), None)
+        await emitter.process_frame(frames.BotStoppedSpeakingFrame(), None)
+        await asyncio.sleep(0.03)
+        assert sent[-2:] == ["replying", "idle"]
+
+    asyncio.run(scenario())
+
+
+def test_audio_done_precedes_debounced_idle(phases):
+    module, frames = phases
+
+    async def scenario():
+        sent = []
+
+        async def send_phase(value):
+            sent.append(("phase", value))
+
+        async def send_audio_done():
+            sent.append(("message", "audio_done"))
+
+        emitter = module.PhaseEmitter(send_phase, send_audio_done=send_audio_done,
+                                      idle_debounce_s=0.05)
+        await emitter.process_frame(frames.BotStartedSpeakingFrame(), None)
+        await emitter.process_frame(frames.BotStoppedSpeakingFrame(), None)
+        assert sent == [("phase", "replying"), ("message", "audio_done")]
+        await asyncio.sleep(0.07)
+        assert sent[-1] == ("phase", "idle")
+
+    asyncio.run(scenario())

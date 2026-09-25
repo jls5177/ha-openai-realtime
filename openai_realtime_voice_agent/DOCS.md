@@ -122,6 +122,12 @@ Every option has a description on the **Configuration** tab. The ones worth know
   firmware has `barge_in` enabled and good acoustic echo cancellation (AEC);
   otherwise the speaker's own audio may interrupt the reply. With this option
   off, the device "stop" wake word or center button still interrupts replies.
+  The add-on advertises this boolean in the WebSocket `hello` handshake; older
+  firmware that does not read this key still uses its own `barge_in` setting.
+- **Device protocol:** the add-on sends `{"type":"audio_done"}` as soon as bot
+  speech ends so supporting firmware can drain the final playback buffer. The
+  `idle` phase remains debounced for 1.5 seconds to bridge gaps between speech
+  segments. Older firmware ignores the unknown `audio_done` message.
 - **`enable_recording`** saves input/output WAV files in the add-on's
   `recordings/` directory for debugging. Files start when a device connects
   and are updated roughly once per second while recording; leave it off

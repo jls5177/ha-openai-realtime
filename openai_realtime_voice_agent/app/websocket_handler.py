@@ -377,6 +377,7 @@ class WebSocketHandler:
         # build_pipeline can wire its device-interrupt callback to the OpenAI
         # service.
         self._serializer: Optional[RawAudioSerializer] = None
+        self._phase_emitter: Optional[PhaseEmitter] = None
         # Connected device websockets, used to push va_client control/phase
         # messages as TEXT frames (the audio path uses the binary serializer).
         self._websockets: set = set()
@@ -463,8 +464,11 @@ class WebSocketHandler:
         # racing-`thinking` suppression); it is APPENDED near the end of the
         # pipeline below, before transport.output().
         phase_emitter = PhaseEmitter(
-            send_phase=self.broadcast_phase, interrupt_response=self.interrupt_response
+            send_phase=self.broadcast_phase,
+            send_audio_done=self.broadcast_audio_done,
+            interrupt_response=self.interrupt_response,
         )
+        self._phase_emitter = phase_emitter
 
         pipeline_components = [
             transport.input(),
@@ -606,6 +610,7 @@ class WebSocketHandler:
         _kill_next_response = {"v": False}
 
         async def _on_device_interrupt():
+            phase_emitter.reset_user_speaking()
             _interrupt_kill_until["t"] = time.monotonic() + INTERRUPT_KILL_WINDOW_S
             # Arm the next-response kill on EVERY stop (see the flag comment):
             # the 1.5 s time-window alone misses responses that land later —
@@ -656,6 +661,7 @@ class WebSocketHandler:
             # utterance in OpenAI's input buffer; start every (re)connection
             # with a clean one. The per-WAKE/follow-up stale-buffer case is
             # covered by the device's {"type":"flush"} on follow-up timeout.
+            phase_emitter.reset_user_speaking()
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🎬 device (re)connected → input_audio_buffer.clear (clean start)")
@@ -762,6 +768,10 @@ class WebSocketHandler:
         # think are connected (was debug).
         logger.info(f"➡️ broadcast phase '{value}' to {len(self._websockets)} device(s)")
         await self.broadcast_json({"type": "phase", "value": value})
+
+    async def broadcast_audio_done(self) -> None:
+        """Notify the device of bot audio completion without waiting for idle."""
+        await self.broadcast_json({"type": "audio_done"})
     
     def setup_event_handlers(
         self,
@@ -786,6 +796,8 @@ class WebSocketHandler:
             logger.info(f"🔗 New WebSocket connection from IP: {client_id}")
             # Track the raw connection so we can push phase/control TEXT frames.
             self._websockets.add(websocket)
+            if self._phase_emitter is not None:
+                self._phase_emitter.reset_user_speaking()
             # Handshake ack expected by the va_client protocol (server -> device
             # "hello"). The Voice PE firmware tolerates its absence, but sending
             # it keeps both sides in lockstep with the documented protocol.
@@ -797,6 +809,7 @@ class WebSocketHandler:
                 {
                     "type": "hello",
                     "audio_out": "pcm",
+                    "interrupt_response": self.interrupt_response,
                     "follow_up_ms": self.follow_up_ms,
                     "follow_up_open_delay_ms": self.follow_up_open_delay_ms,
                     "wake_open_delay_ms": self.wake_open_delay_ms,
@@ -809,6 +822,8 @@ class WebSocketHandler:
         async def on_client_disconnected(transport: WebsocketServerTransport, websocket, *args, **kwargs):
             """Handle client disconnection."""
             self._websockets.discard(websocket)
+            if self._phase_emitter is not None:
+                self._phase_emitter.reset_user_speaking()
             client_id = self.extract_client_id(websocket)
             if client_id:
                 logger.info(f"🔌 Client {client_id} disconnected")

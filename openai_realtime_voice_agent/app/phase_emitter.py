@@ -121,7 +121,7 @@ class PhaseEmitter(FrameProcessor):
     INFLIGHT_LOG_EVERY_S = 30.0
 
     def __init__(self, send_phase, idle_debounce_s: float = None,
-                 interrupt_response: bool = False, **kwargs):
+                 interrupt_response: bool = False, send_audio_done=None, **kwargs):
         """
         Args:
             send_phase: async callable(value: str) that delivers the phase to
@@ -132,9 +132,12 @@ class PhaseEmitter(FrameProcessor):
                 the inter-sentence / tool-call gaps in OpenAI Realtime TTS so the
                 LED and the "stop" wake word stay active for the whole answer.
             interrupt_response: whether the mic stays open during a reply.
+            send_audio_done: async callback notifying the device as soon as bot
+                audio ends, independently of the debounced idle phase.
         """
         super().__init__(**kwargs)
         self._send_phase = send_phase
+        self._send_audio_done = send_audio_done
         self._interrupt_response = interrupt_response
         self._user_speaking = False
         if idle_debounce_s is None:
@@ -171,7 +174,12 @@ class PhaseEmitter(FrameProcessor):
         """Device woke (or a follow-up window closed without speech). Until the
         next real UserStartedSpeaking, any UserStoppedSpeaking is a dangling
         pre-wake VAD segment (see _speech_since_wake)."""
+        self.reset_user_speaking()
         self._speech_since_wake = False
+
+    def reset_user_speaking(self) -> None:
+        """Clear VAD speech state at a device turn or connection boundary."""
+        self._user_speaking = False
 
     def set_kill_window_handlers(self, on_dangling=None, on_real_speech=None) -> None:
         """Wire the dangling-VAD guard to the websocket_handler kill-window."""
@@ -189,6 +197,7 @@ class PhaseEmitter(FrameProcessor):
         """
         self._cancel_pending_idle()
         self._cancel_watchdog()
+        self.reset_user_speaking()
         self._suppress_thinking = True
         if reason:
             logger.warning(f"📞 forcing phase idle ({reason[:90]})")
@@ -334,6 +343,8 @@ class PhaseEmitter(FrameProcessor):
             if not (self._interrupt_response and self._user_speaking):
                 await self._emit("replying")
         elif isinstance(frame, BotStoppedSpeakingFrame):
+            if self._send_audio_done is not None:
+                await self._send_audio_done()
             # Don't go idle immediately — TTS comes in segments. Only emit idle
             # if the bot stays silent for the debounce window.
             self._cancel_pending_idle()
