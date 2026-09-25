@@ -22,9 +22,8 @@ class ContextCacheEntry:
 class SessionManager:
     """Manages OpenAI Realtime sessions with context caching per client device.
     
-    For each new WebSocket connection, a new session is created, but the context
-    from previous sessions for the same client is preserved if the last connection
-    closed within the reuse timeout period.
+    The running pipeline reuses one OpenAI service across WebSocket connections.
+    Context is cached per client on disconnect for the configured reuse window.
     """
     
     def __init__(self, reuse_timeout: float = 300.0, max_restored_messages: int = 0):
@@ -314,4 +313,3 @@ class ContextInitializer(FrameProcessor):
             return
         
         await self.push_frame(frame, direction)
-

@@ -704,7 +704,8 @@ class Application:
         """Run the application."""
         await self.initialize()
         
-        # Create initial OpenAI service (will be replaced per connection)
+        # This service stays bound to the running pipeline; ConnectionRecovery
+        # refreshes its realtime session in place without replacing the object.
         await self._ensure_openai_service()
         
         # Build pipeline - based on pipecat-examples, one pipeline handles all connections
@@ -761,7 +762,10 @@ class Application:
         # Setup WebSocket event handlers
         async def on_client_connected(client_id: str):
             """Handle new client connection."""
-            await self._ensure_openai_service(client_id=client_id)
+            if self.openai_service is None or self.session_manager is None:
+                raise RuntimeError("Pipeline service must exist before clients connect")
+            self.session_manager.set_current_service(client_id, self.openai_service)
+            logger.info("Client %s connected; using OpenAI service bound to pipeline", client_id)
             if self.audio_recording_service:
                 self.audio_recording_service.start_new_session(client_id)
         
