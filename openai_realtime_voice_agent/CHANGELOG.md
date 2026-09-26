@@ -2,7 +2,10 @@
 
 All notable changes to this add-on. Newest first.
 
-## 0.6.1-sat1.7
+## 0.6.2-sat.7
+
+- Versions now use `X.Y.Z-sat.N`. Home Assistant could not order the old
+  `-sat1.N` suffix, so it never offered the update.
 
 - Add a dedicated `personality` selector (`standard`, `monday`, `cat`,
   `monday_cat`) and optional `home_location` for local answers. Keep spoken
