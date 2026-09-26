@@ -15,7 +15,7 @@ from app.phase_emitter import TURN_LIVENESS
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
 from app.web_search_tool import get_web_search_tool_definition, create_web_search_tool_handler
 from app.timer_tool import get_timer_tool_definitions, create_timer_tool_handler
-from app.home_context import core_base, fetch_home_config, resolve_time_zone, resolve_units
+from app.home_context import context_endpoint, fetch_home_config, resolve_time_zone, resolve_units
 from app.personas import PERSONAS
 from app.prompt_builder import build_prompt
 from app.time_tool import get_time_tool_definition, create_time_tool_handler
@@ -426,17 +426,17 @@ class Application:
 
         supervisor_token = os.environ.get("LONGLIVED_TOKEN") or os.environ.get("SUPERVISOR_TOKEN")
         ha_mcp_url = os.environ.get("HA_MCP_URL") or "http://supervisor/core/api/mcp"
-        self.ha_base = None
+        self.ha_base, self.ha_token = context_endpoint(
+            os.environ.get("HA_MCP_URL", ""), os.environ.get("LONGLIVED_TOKEN"),
+            os.environ.get("SUPERVISOR_TOKEN"))
         home_config = {}
         try:
-            self.ha_base = core_base(os.environ.get("HA_MCP_URL", ""))
-            if supervisor_token:
-                home_config = await fetch_home_config(self.ha_base, supervisor_token)
+            if self.ha_token:
+                home_config = await fetch_home_config(self.ha_base, self.ha_token)
             else:
                 logger.warning("No HA token available for home context lookup")
         except Exception as e:
             logger.warning("Could not load HA home configuration: %s", e)
-        self.ha_token = supervisor_token
         self.home_location = home_location_option
         self.time_zone = resolve_time_zone(home_config, os.environ.get("TZ"))
         self.units = resolve_units(home_config)

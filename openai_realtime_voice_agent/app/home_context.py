@@ -20,6 +20,25 @@ def core_base(ha_mcp_url: str) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path[:-len("/api/mcp")], "", ""))
 
 
+SUPERVISOR_CORE = "http://supervisor/core"
+
+
+def context_endpoint(ha_mcp_url: str, longlived_token: str | None,
+                     supervisor_token: str | None) -> tuple[str, str | None]:
+    """Pick the HA base URL and the token that base accepts.
+
+    The Supervisor proxy only accepts the add-on's own token, so a long-lived
+    token is used only with a base taken from a user-provided .../api/mcp URL.
+    """
+    if ha_mcp_url:
+        try:
+            return core_base(ha_mcp_url), longlived_token or supervisor_token
+        except ValueError:
+            logger.info("HA_MCP_URL is not a Home Assistant /api/mcp URL; "
+                        "using the Supervisor for home context")
+    return SUPERVISOR_CORE, supervisor_token
+
+
 async def fetch_home_config(base: str, token: str) -> dict:
     """Read HA core config once at startup, with a bounded HTTP timeout."""
     timeout = aiohttp.ClientTimeout(total=2.5)

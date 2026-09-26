@@ -4,7 +4,7 @@ import json
 import pytest
 
 from app.home_context import (
-    core_base, fetch_home_config, find_device_area, lookup_device_area,
+    context_endpoint, core_base, fetch_home_config, find_device_area, lookup_device_area,
     resolve_time_zone, resolve_units,
 )
 import app.home_context as home_context
@@ -130,3 +130,13 @@ def test_one_shot_area_lookup_auth_and_registry_requests(monkeypatch):
         ]
 
     asyncio.run(scenario())
+
+
+def test_context_endpoint_pairs_token_with_base():
+    # Supervisor proxy rejects long-lived tokens: always use the add-on token there.
+    assert context_endpoint("", "LL", "SUP") == ("http://supervisor/core", "SUP")
+    assert context_endpoint("https://ha.example/api/mcp", "LL", "SUP") == ("https://ha.example", "LL")
+    assert context_endpoint("https://ha.example/api/mcp", None, "SUP") == ("https://ha.example", "SUP")
+    # Non-HA MCP servers (e.g. third-party ha-mcp) fall back to the Supervisor.
+    assert context_endpoint("http://addon:9583/private/mcp", "LL", "SUP") == ("http://supervisor/core", "SUP")
+    assert context_endpoint("", "LL", None) == ("http://supervisor/core", None)
