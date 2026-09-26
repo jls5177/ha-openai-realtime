@@ -125,7 +125,7 @@ configuration:
     description: >-
       The model that does the lookup and summarises the answer. gpt-5.5
       (default) gives the best answers; mini/nano models are cheaper but miss
-      more. For an unlisted model pick "custom" and enable "Show unused
+      more. gpt-6-sol and gpt-6-luna (very cheap) can also be used here. For an unlisted model pick "custom" and enable "Show unused
       optional configuration options" at the bottom.
   web_search_model_custom:
     name: "🌐 Web search · Search model (custom)"

@@ -98,6 +98,9 @@ answer back.
 - Uses your **existing OpenAI key** — no extra account.
 - Default model `gpt-5.5` (best quality). Cheaper options trade price/quality
   (`gpt-5.4`, `gpt-5-mini`, the nano models, …) — a few cents per search.
+  `gpt-6-sol` and the very cheap `gpt-6-luna` are also listed. GPT-6 models are
+  text models, not Realtime models, so they can only be used for web search;
+  the voice itself stays on a `gpt-realtime-*` model.
 - Adds ~1–3 s while it searches (the device shows "thinking").
 - If the model name is rejected, the assistant just says it couldn't search — it
   won't crash the session, so you can change `web_search_model` and retry.

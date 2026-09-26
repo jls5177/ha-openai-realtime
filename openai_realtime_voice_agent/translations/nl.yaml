@@ -129,7 +129,8 @@ configuration:
     description: >-
       Het model dat de zoekopdracht uitvoert en het antwoord samenvat.
       gpt-5.5 (standaard) geeft de beste antwoorden; mini/nano-modellen zijn
-      goedkoper maar missen meer. Voor een ander model: kies "custom" en zet
+      goedkoper maar missen meer. gpt-6-sol en gpt-6-luna (zeer goedkoop)
+      kunnen hier ook gebruikt worden. Voor een ander model: kies "custom" en zet
       onderaan "Toon ongebruikte optionele configuratie-opties" aan.
   web_search_model_custom:
     name: "🌐 Websearch · Zoekmodel (custom)"

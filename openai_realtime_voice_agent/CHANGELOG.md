@@ -2,6 +2,11 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.5
+
+- Add `gpt-6-sol` and `gpt-6-luna` to the web search model list. They do not
+  support the Realtime API, so the voice model is unchanged.
+
 ## 0.6.1-sat1.4
 
 - Timer ids use a random per-process prefix and skip ids already on the device,
