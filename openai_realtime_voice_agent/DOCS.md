@@ -142,8 +142,9 @@ Every option has a description on the **Configuration** tab. The ones worth know
   speech ends so supporting firmware can drain the final playback buffer. The
   `idle` phase remains debounced for 1.5 seconds to bridge gaps between speech
   segments. Older firmware ignores the unknown `audio_done` message.
-- **`enable_recording`** saves input/output WAV files in the add-on's
-  `recordings/` directory for debugging. Files start when a device connects
+- **`enable_recording`** saves input (what the device mic sent) and output
+  WAV files to `/share/openai_realtime_voice_agent/recordings/` for debugging;
+  fetch them with the Samba/SSH add-ons or the File editor. Files start when a device connects
   and are updated roughly once per second while recording; leave it off
   unless troubleshooting.
 

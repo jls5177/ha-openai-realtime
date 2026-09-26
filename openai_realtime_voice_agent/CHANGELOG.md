@@ -2,6 +2,12 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.6
+
+- `enable_recording` now writes WAVs to
+  `/share/openai_realtime_voice_agent/recordings/` (the add-on maps `/share`),
+  so the files can be retrieved. Override with the `RECORDINGS_DIR` env var.
+
 ## 0.6.1-sat1.5
 
 - Add `gpt-6-sol` and `gpt-6-luna` to the web search model list. They do not

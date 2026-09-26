@@ -55,6 +55,16 @@ def _resolve_choice(env_var: str, custom_env_var: str, default: str) -> str:
 dotenv.load_dotenv()
 
 
+def recordings_dir() -> str:
+    """Recording output dir: RECORDINGS_DIR, else /share (visible to users), else ./recordings."""
+    configured = os.environ.get("RECORDINGS_DIR")
+    if configured:
+        return configured
+    if os.path.isdir("/share"):
+        return "/share/openai_realtime_voice_agent/recordings"
+    return "recordings"
+
+
 class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
     """OpenAIRealtimeLLMService with audio-truncation-on-interruption disabled.
 
@@ -424,7 +434,7 @@ class Application:
             enable_recording=enable_recording,
             sample_rate=24000,
             chunk_duration_seconds=30,
-            output_dir="recordings"
+            output_dir=recordings_dir()
         )
 
         # Initialize WebSocket handler

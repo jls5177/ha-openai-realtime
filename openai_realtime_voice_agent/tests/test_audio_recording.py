@@ -84,3 +84,20 @@ def test_service_does_not_open_wav_until_client_connects(tmp_path, monkeypatch):
     for path in tmp_path.glob("*.wav"):
         with wave.open(str(path), "rb") as wav:
             assert wav.getnframes() == 1
+
+
+def test_recordings_dir_prefers_env(monkeypatch):
+    from app.main import recordings_dir
+
+    monkeypatch.setenv("RECORDINGS_DIR", "/tmp/custom")
+    assert recordings_dir() == "/tmp/custom"
+
+
+def test_recordings_dir_uses_share_when_present(monkeypatch):
+    import app.main as main
+
+    monkeypatch.delenv("RECORDINGS_DIR", raising=False)
+    monkeypatch.setattr(main.os.path, "isdir", lambda p: p == "/share")
+    assert main.recordings_dir() == "/share/openai_realtime_voice_agent/recordings"
+    monkeypatch.setattr(main.os.path, "isdir", lambda p: False)
+    assert main.recordings_dir() == "recordings"
