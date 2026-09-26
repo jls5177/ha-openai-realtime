@@ -11,17 +11,19 @@ configuration:
       Alles wat de assistent doet — luisteren, denken, praten, zoeken op
       internet — loopt via deze sleutel.
   instructions:
-    name: "🔑 Basis · Persoonlijkheid (systeemprompt)"
+    name: "🔑 Basis · Eigen instructies (systeemprompt)"
     description: >-
-      Instructies in gewone taal die de assistent vormen: karakter, taal en
-      huisregels. Schrijf het alsof je een persoon instrueert. Twee tips die
-      er op een spraakapparaat toe doen: leg de taal vast ("Spreek en versta
-      uitsluitend Nederlands. Wissel nooit van taal.") en zeg dat hij zijn
-      gereedschap stil moet gebruiken in plaats van "momentje" te zeggen.
-      BEWERK-TIP: dit veld is hier één regel (een beperking van de Home
-      Assistant-interface) — gebruik voor comfortabel bewerken het ⋮-menu
-      bovenaan dit tabblad → "Bewerken als YAML": dan krijg je een volwaardige
-      teksteditor.
+      Eigen taal- en huisregels; kies het karakter apart bij Persoonlijkheid.
+      Spraakregels (korte gesproken antwoorden, gereedschap stil gebruiken)
+      gelden altijd, ook bij eigen instructies. Pas voor een andere taal de
+      LANGUAGE-regel hier aan. Dit veld is één regel in de add-on-interface;
+      gebruik ⋮ → "Bewerken als YAML" voor een volledige teksteditor.
+  personality:
+    name: "🔑 Basis · Persoonlijkheid"
+    description: >-
+      Kies het karakter: standard (neutraal), monday (droge humor), cat
+      (speelse kat) of monday_cat (beide). Standaard monday. Spraakregels
+      gelden voor elk karakter; gebruik Eigen instructies voor huisregels.
   transcription_language:
     name: "🔑 Basis · Spreektaal (bijv. nl, en, de)"
     description: >-
@@ -185,6 +187,13 @@ configuration:
       gebruiken; leeg = allemaal. Met de ingebouwde MCP-server kun je dit
       leeg laten. Vooral nuttig met de ha-mcp-add-on (80+ tools) om gesprekken
       snel en goedkoop te houden.
+  home_location:
+    name: "🏠 Home Assistant · Thuislocatie"
+    description: >-
+      Optionele plaats of regio voor lokale antwoorden en zoekopdrachten
+      (bijv. "Amsterdam, NL"). Leeg = geen plaats aannemen: de naam van je
+      huis in Home Assistant is niet altijd een plaatsnaam. Stel de tijdzone
+      in Home Assistant in voor de juiste lokale tijd.
 
   # --- ⚙️ Geavanceerd ---
   websocket_port:

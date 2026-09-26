@@ -107,7 +107,10 @@ def test_device_interrupt_flush_and_start_reset_speech(monkeypatch):
 
         for boundary in ("interrupt", "flush", "start", "wake"):
             handler._phase_emitter._user_speaking = True
-            await callbacks[boundary]()
+            if boundary == "start":
+                await callbacks[boundary]({"type": "start"})
+            else:
+                await callbacks[boundary]()
             assert not handler._phase_emitter._user_speaking, boundary
         assert len(sent_events) == 3
 

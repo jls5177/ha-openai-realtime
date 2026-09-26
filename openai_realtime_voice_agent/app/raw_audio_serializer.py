@@ -2,18 +2,35 @@
 import json
 import logging
 import os
+import re
 from pipecat.frames.frames import InputAudioRawFrame, OutputAudioRawFrame, Frame
 from pipecat.serializers.base_serializer import FrameSerializer, FrameSerializerType
 
 logger = logging.getLogger(__name__)
+MAC_PATTERN = re.compile(r"[0-9a-fA-F]{2}(?::[0-9a-fA-F]{2}){5}\Z")
+
+
+def validated_start(data: dict) -> dict:
+    """Keep only valid, bounded device identity fields; bare starts are valid."""
+    start = {"type": "start"}
+    if "mac" in data:
+        if isinstance(data["mac"], str) and MAC_PATTERN.fullmatch(data["mac"]):
+            start["mac"] = data["mac"].lower()
+        else:
+            logger.warning("Device start has an invalid MAC; room lookup unavailable")
+    if "name" in data:
+        if isinstance(data["name"], str) and len(data["name"]) <= 64:
+            start["name"] = data["name"]
+        else:
+            logger.warning("Device start has an invalid name; ignoring it")
+    return start
 
 
 class RawAudioSerializer(FrameSerializer):
     """Serializer that treats all binary messages as raw PCM audio.
 
-    Text frames (JSON control messages such as the va_client phase protocol)
-    are NOT handled here — they are sent/received directly on the websocket by
-    the WebSocketHandler so they go out as TEXT frames, not binary.
+    Incoming JSON control frames are consumed here and routed to callbacks;
+    outgoing phase/control frames are sent as TEXT by the WebSocketHandler.
     """
 
     def __init__(self, input_sample_rate: int | None = None):
@@ -58,7 +75,7 @@ class RawAudioSerializer(FrameSerializer):
         self._on_interrupt = handler
 
     def set_session_start_handler(self, handler):
-        """Register the async no-arg callback fired on a device 'start'."""
+        """Register the async callback receiving a validated device 'start'."""
         self._on_session_start = handler
 
     def set_mic_flush_handler(self, handler):
@@ -115,7 +132,7 @@ class RawAudioSerializer(FrameSerializer):
                 logger.info("🎬 device connection start received")
                 if self._on_session_start is not None:
                     try:
-                        await self._on_session_start()
+                        await self._on_session_start(validated_start(data))
                     except Exception as e:
                         logger.warning(f"⚠️ device session-start handler failed: {e!r}")
             elif isinstance(data, dict) and data.get("type") == "flush":

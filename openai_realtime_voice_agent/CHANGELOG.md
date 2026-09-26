@@ -2,6 +2,17 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.1-sat1.7
+
+- Add a dedicated `personality` selector (`standard`, `monday`, `cat`,
+  `monday_cat`) and optional `home_location` for local answers. Keep spoken
+  Voice Rules separate from the shorter default instructions.
+- Use Home Assistant's configured local time and device area for contextual
+  answers where available; newer Satellite firmware supplies MAC/name for
+  area lookup. The time tool is selected automatically.
+- Document the single-Satellite transport limit and clarify that prompt-only
+  confirmation is not a safety boundary for locks, garages or alarms.
+
 ## 0.6.1-sat1.6
 
 - `enable_recording` now writes WAVs to

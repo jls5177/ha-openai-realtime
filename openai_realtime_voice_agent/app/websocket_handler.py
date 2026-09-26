@@ -23,6 +23,9 @@ from app.audio_recording_service import AudioRecordingService
 from app.phase_emitter import PhaseEmitter
 from app.transcript_logger import TranscriptLogger
 from app.timer_tool import TimerBridge
+from app.home_context import lookup_device_area
+from app.prompt_builder import build_prompt
+from app.session_instructions import apply_instructions, _update_system_context
 
 logger = logging.getLogger(__name__)
 
@@ -383,6 +386,67 @@ class WebSocketHandler:
         # messages as TEXT frames (the audio path uses the binary serializer).
         self._websockets: set = set()
         self.timer_bridge = TimerBridge(self)
+        self._instruction_context: dict | None = None
+        self._area_task: asyncio.Task | None = None
+        self._area_generation = 0
+        self._context_aggregator = None
+
+    def configure_instructions(self, *, instructions: str, personality: str,
+                               home_location: str, time_zone: str | None,
+                               units: str | None, clock_tool: str,
+                               ha_base: str | None, ha_token: str | None) -> None:
+        self._instruction_context = {
+            "instructions": instructions,
+            "personality": personality,
+            "home_location": home_location,
+            "time_zone": time_zone,
+            "units": units,
+            "clock_tool": clock_tool,
+        }
+        self._ha_base = ha_base
+        self._ha_token = ha_token
+
+    def start_area_lookup(self, openai_service, start: dict) -> None:
+        """A fresh connection first loses any previous room, then resolves its own."""
+        if self._instruction_context is None:
+            return
+        self._area_generation += 1
+        if self._area_task is not None:
+            self._area_task.cancel()
+        self._area_task = asyncio.create_task(
+            self._resolve_area(openai_service, start, self._area_generation)
+        )
+
+    async def _resolve_area(self, openai_service, start: dict, generation: int) -> None:
+        context = self._context_aggregator.user().context if self._context_aggregator else None
+        try:
+            await apply_instructions(
+                openai_service, build_prompt(**self._instruction_context, area=None), context
+            )
+        except Exception:
+            logger.exception("Could not clear previous satellite area from the live session")
+            return
+        mac = start.get("mac")
+        area = None
+        if mac and self._ha_base and self._ha_token:
+            try:
+                area = await asyncio.wait_for(
+                    lookup_device_area(self._ha_base, self._ha_token, mac), timeout=3
+                )
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.warning("Satellite area lookup failed: %s", e)
+        if generation != self._area_generation:
+            return
+        logger.info("Satellite area: %s", area or "unknown")
+        if area:
+            try:
+                await apply_instructions(
+                    openai_service, build_prompt(**self._instruction_context, area=area), context
+                )
+            except Exception:
+                logger.exception("Could not apply satellite area to the live session")
     
     def create_transport(self) -> WebsocketServerTransport:
         """
@@ -457,6 +521,10 @@ class WebSocketHandler:
         if self.session_manager:
             context_aggregator = self.session_manager.create_context_aggregator(client_id)
             context_initializer = self.session_manager.create_context_initializer(client_id, context_aggregator)
+            _update_system_context(
+                context_aggregator.user().context, openai_service._session_properties.instructions
+            )
+        self._context_aggregator = context_aggregator
         
         # Build pipeline components. InputResampler runs FIRST (right after the
         # transport) so every later stage — VAD, context aggregator, OpenAI
@@ -657,7 +725,7 @@ class WebSocketHandler:
             except Exception as e:
                 logger.info(f"🛑 post-interrupt racing-response cancel no-op ({e!r})")
 
-        async def _on_device_session_start():
+        async def _on_device_session_start(start: dict):
             # va_client sends {"type":"start"} once per WebSocket CONNECTION
             # (on connect) — NOT per wake. A reconnect mid-utterance (wifi
             # blip, backend restart with session reuse) can leave half an
@@ -665,6 +733,7 @@ class WebSocketHandler:
             # with a clean one. The per-WAKE/follow-up stale-buffer case is
             # covered by the device's {"type":"flush"} on follow-up timeout.
             phase_emitter.reset_user_speaking()
+            self.start_area_lookup(openai_service, start)
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🎬 device (re)connected → input_audio_buffer.clear (clean start)")
@@ -905,6 +974,12 @@ class WebSocketHandler:
     
     async def cleanup(self):
         """Cleanup WebSocket handler resources."""
+        if self._area_task is not None:
+            self._area_task.cancel()
+            try:
+                await self._area_task
+            except asyncio.CancelledError:
+                pass
         if self.runner:
             try:
                 await self.runner.cancel()

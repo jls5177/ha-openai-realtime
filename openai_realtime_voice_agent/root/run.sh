@@ -4,6 +4,7 @@ set -e
 # --- 🔑 Basics ---
 OPENAI_API_KEY=$(bashio::config 'openai_api_key')
 INSTRUCTIONS=$(bashio::config 'instructions')
+PERSONALITY=$(bashio::config 'personality')
 TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
 
 # --- 🗣️ Model & voice ---
@@ -35,6 +36,7 @@ NOISE_REDUCTION=$(bashio::config 'noise_reduction')
 HA_MCP_URL=$(bashio::config 'ha_mcp_url')
 LONGLIVED_TOKEN=$(bashio::config 'longlived_token')
 MCP_TOOL_ALLOWLIST=$(bashio::config 'mcp_tool_allowlist')
+HOME_LOCATION=$(bashio::config 'home_location')
 
 # --- ⚙️ Advanced ---
 WEBSOCKET_PORT=$(bashio::config 'websocket_port')
@@ -54,6 +56,7 @@ fi
 # Export environment variables
 export OPENAI_API_KEY
 export INSTRUCTIONS
+export PERSONALITY
 export TRANSCRIPTION_LANGUAGE
 export OPENAI_MODEL
 export OPENAI_VOICE
@@ -72,6 +75,7 @@ export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION
 export LONGLIVED_TOKEN
 export MCP_TOOL_ALLOWLIST
+export HOME_LOCATION
 export WEBSOCKET_PORT
 export SESSION_REUSE_TIMEOUT_SECONDS
 export MAX_CONTEXT_MESSAGES

@@ -15,6 +15,10 @@ from app.phase_emitter import TURN_LIVENESS
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
 from app.web_search_tool import get_web_search_tool_definition, create_web_search_tool_handler
 from app.timer_tool import get_timer_tool_definitions, create_timer_tool_handler
+from app.home_context import core_base, fetch_home_config, resolve_time_zone, resolve_units
+from app.personas import PERSONAS
+from app.prompt_builder import build_prompt
+from app.time_tool import get_time_tool_definition, create_time_tool_handler
 from app.audio_recording_service import AudioRecordingService
 from app.session_manager import SessionManager
 from app.websocket_handler import WebSocketHandler
@@ -303,10 +307,16 @@ class Application:
         # Get instructions with default
         instructions = os.environ.get(
             "INSTRUCTIONS",
-            "You are the Home Assistant Voice Agent and can control the Smart Home. "
-            "Use set_timer, cancel_timer and list_timers for device timers. "
+            "You are the Home Assistant voice agent and can control the smart home. "
+            "LANGUAGE: Speak and understand only English; never switch language. "
+            "Use set_timer, cancel_timer and list_timers for device timers, not Home Assistant timer entities. "
             "Only confirm timer actions when the device confirms them.",
         )
+        personality = os.environ.get("PERSONALITY", "monday").strip()
+        if personality not in PERSONAS:
+            logger.warning("Unknown personality %r; using monday", personality)
+            personality = "monday"
+        home_location_option = os.environ.get("HOME_LOCATION", "").strip()
 
         # OpenAI Realtime model + voice. These are dropdowns in the add-on UI with
         # a "custom" sentinel + a sibling *_CUSTOM free-text field; _resolve_choice
@@ -413,12 +423,27 @@ class Application:
         
         if not openai_api_key:
             raise ValueError("OPENAI_API_KEY environment variable is required")
-        
+
+        supervisor_token = os.environ.get("LONGLIVED_TOKEN") or os.environ.get("SUPERVISOR_TOKEN")
+        ha_mcp_url = os.environ.get("HA_MCP_URL") or "http://supervisor/core/api/mcp"
+        self.ha_base = None
+        home_config = {}
+        try:
+            self.ha_base = core_base(os.environ.get("HA_MCP_URL", ""))
+            if supervisor_token:
+                home_config = await fetch_home_config(self.ha_base, supervisor_token)
+            else:
+                logger.warning("No HA token available for home context lookup")
+        except Exception as e:
+            logger.warning("Could not load HA home configuration: %s", e)
+        self.ha_token = supervisor_token
+        self.home_location = home_location_option
+        self.time_zone = resolve_time_zone(home_config, os.environ.get("TZ"))
+        self.units = resolve_units(home_config)
+
         # Initialize Home Assistant MCP Service
         mcp_client = None
         try:
-            supervisor_token = os.environ.get("LONGLIVED_TOKEN") or os.environ.get("SUPERVISOR_TOKEN")
-            ha_mcp_url = os.environ.get("HA_MCP_URL", "http://supervisor/core/api/mcp")
             if supervisor_token:
                 logger.info("Loading Home Assistant MCP tools...")
                 self.mcp_service = HomeAssistantMCPService(url=ha_mcp_url, access_token=supervisor_token)
@@ -471,6 +496,7 @@ class Application:
         self.transcription_language = transcription_language
         self.transcription_model = transcription_model
         self.instructions = instructions
+        self.personality = personality
         self.model = openai_model
         self.voice = openai_voice
         self.openai_speed = openai_speed
@@ -552,6 +578,7 @@ class Application:
             # default we do NOT expose it, so the model can't hang up the device
             # mid-conversation.
             all_tools = []
+            clock_tool = None
             if self.enable_disconnect_tool:
                 all_tools.append(get_disconnect_tool_definition())
 
@@ -587,6 +614,12 @@ class Application:
                             }
                         }
                         all_tools.append(openai_tool)
+                        if (
+                            clock_tool is None
+                            and (function_schema.name == "GetDateTime"
+                                 or function_schema.name.endswith("GetDateTime"))
+                        ):
+                            clock_tool = function_schema.name
                         exposed += 1
 
                     if self.mcp_tool_allowlist:
@@ -595,6 +628,10 @@ class Application:
                         logger.info(f"✅ Fetched {len(mcp_tools_schema.standard_tools)} MCP tools")
                 except Exception as e:
                     logger.warning(f"⚠️ Failed to fetch MCP tool definitions: {e}")
+
+            if clock_tool is None:
+                clock_tool = "get_current_time"
+                all_tools.append(get_time_tool_definition())
             
             # Turn detection: semantic_vad (recommended — semantic end-of-turn,
             # echo-resistant, doesn't cut the user off) or classic server_vad.
@@ -651,7 +688,10 @@ class Application:
             )
 
             session_properties = SessionProperties(
-                instructions=self.instructions,
+                instructions=build_prompt(
+                    self.instructions, self.personality, self.home_location,
+                    self.time_zone, self.units, clock_tool, area=None
+                ),
                 # Cap the reply length: bounds runaway monologues + per-response
                 # output-token cost. None = unlimited (the API default "inf").
                 max_output_tokens=self.max_output_tokens,
@@ -691,6 +731,20 @@ class Application:
                 start_audio_paused=False
             )
             logger.info(f"✅ OpenAI Service created: {type(self.openai_service).__name__}")
+            self.websocket_handler.configure_instructions(
+                instructions=self.instructions,
+                personality=self.personality,
+                home_location=self.home_location,
+                time_zone=self.time_zone,
+                units=self.units,
+                clock_tool=clock_tool,
+                ha_base=self.ha_base,
+                ha_token=self.ha_token,
+            )
+            if clock_tool == "get_current_time":
+                self.openai_service.register_function(
+                    clock_tool, create_time_tool_handler(self.time_zone, self.home_location)
+                )
             
             # Register disconnect tool handler (only when the tool is exposed)
             if self.enable_disconnect_tool:
@@ -702,7 +756,9 @@ class Application:
             if self.enable_web_search:
                 self.openai_service.register_function(
                     "web_search",
-                    create_web_search_tool_handler(self.openai_api_key, self.web_search_model),
+                    create_web_search_tool_handler(
+                        self.openai_api_key, self.web_search_model, self.home_location
+                    ),
                 )
                 logger.info(f"✅ Registered web_search tool handler (model={self.web_search_model})")
 

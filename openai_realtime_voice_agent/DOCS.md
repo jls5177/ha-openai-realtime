@@ -44,7 +44,9 @@ The assistant controls your home through Home Assistant's **official MCP Server*
    Protocol Server"** and add it.
 2. **Expose the entities** you want voice control over to **Assist**
    (Settings → Voice assistants → *Exposed entities*). The MCP server only offers
-   what's exposed.
+   what's exposed. For a hard safety guarantee, **do not expose locks, garage
+   doors or alarm controls to Assist**. "Confirm before unlocking" is only a
+   prompt rule, not an enforced safeguard.
 3. In the add-on, leave **`ha_mcp_url`** **blank** — it then uses the built-in
    endpoint (`http://supervisor/core/api/mcp`) with the add-on's own token. Leave
    **`longlived_token`** blank too, unless startup logs a 401/403 on
@@ -57,6 +59,12 @@ You get a small fixed set of Assist tools (`HassTurnOn`, `HassTurnOff`,
 **`mcp_tool_allowlist`** (optional): a comma-separated whitelist of tool names. Leave
 blank to expose all, or trim to just what you use, e.g.:
 `HassTurnOn,HassTurnOff,HassLightSet,GetLiveContext,GetDateTime`
+
+For room-aware commands such as "turn on the lights in here", assign the
+**Satellite device** to an area in Home Assistant (Settings → Devices & Services
+→ Devices). Newer firmware sends its MAC address and name so the add-on can look
+up the device's HA area. With older firmware the room is unknown; name the room
+explicitly or expect a clarification rather than assuming where the device is.
 
 ## 4. Recommended starting settings
 
@@ -71,7 +79,9 @@ option has plain-language inline help.
 | `openai_model` | `gpt-realtime-2` | newest speech-to-speech model |
 | `openai_voice` | `marin` | `marin`/`cedar` are the newest voices |
 | `transcription_language` | *(blank)* | set your ISO code (e.g. `nl`): locks the language + logs the user transcript |
-| `instructions` | *(English default)* | the system prompt; swap the LANGUAGE line for your language |
+| `instructions` | *(English default)* | custom language/house rules; change the LANGUAGE line for your language; Voice Rules always apply |
+| `personality` | `monday` | `standard` (neutral), `monday` (dry wit), `cat` (playful), or `monday_cat` (both) |
+| `home_location` | *(blank)* | optional town/region for local answers; HA supplies the time zone and units |
 | `follow_up_listen_seconds` | `8` | mic stays open this long so you can answer back |
 | `follow_up_open_delay_ms` | `700` | echo guard before the follow-up mic opens; lower = snappier but risks ghost turns |
 | `wake_open_delay_ms` | `700` | the same echo guard right after the wake chime; lower = snappier wake but risks a ghost turn |
@@ -124,6 +134,19 @@ Every option has a description on the **Configuration** tab. The ones worth know
 - **`transcription_language`** turns the side-channel transcript on. With it set you
   get `🗣️ user: …` lines in the add-on log (handy for debugging); it does **not**
   change what the model understands — the main model hears your audio natively.
+- **`personality` / `instructions`**: select a persona independently of the
+  custom instructions. The always-present Voice Rules govern spoken brevity
+  and tool use even if you edit `instructions`. Existing installations may
+  have saved the old cheerful/style prompt; remove those lines from your
+  saved instructions if you want the selected persona to come through cleanly.
+  Keep the LANGUAGE rule if you need to lock the spoken language.
+- **`home_location` / local time**: set a town or region (e.g. `Amsterdam, NL`)
+  for location-aware answers. HA's `location_name` is a device/home label,
+  not necessarily a city, so a blank value does not assume a place. Configure
+  your time zone under **Settings → System → General** in Home Assistant;
+  local time follows that time zone.
+  The assistant picks the time tool automatically when you ask for the time
+  — you do not need to ask for a tool by name.
 - **`follow_up_open_delay_ms` / `playback_prebuffer_ms`** default to `700` / `150`
   — an echo guard and jitter cushion. Lowering them makes the device feel
   snappier, but below ~700 ms open delay the reply's own speaker tail can leak
@@ -157,6 +180,11 @@ The add-on log shows each turn: `🗣️ user:` (when transcription language is 
 
 ## Known limitations
 
+- **One Satellite per add-on instance.** The current audio/WebSocket transport
+  serves one active device at a time; use a separate add-on instance per
+  Satellite rather than pointing multiple Satellites at the same port.
+- **Room lookup needs device identity.** Newer firmware sends the device
+  MAC/name for HA area lookup; older firmware leaves the room unknown.
 - **Voice timers require compatible firmware; voice alarms are not supported.**
   Timers belong to the device rather than Home Assistant timer entities. Older
   firmware will not confirm timer commands and no timer is claimed as set.

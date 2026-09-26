@@ -12,16 +12,19 @@ configuration:
       Everything the assistant does — listening, thinking, speaking, web
       search — runs on this key.
   instructions:
-    name: "🔑 Basics · Assistant personality (system prompt)"
+    name: "🔑 Basics · Custom instructions (system prompt)"
     description: >-
-      Plain-text instructions that shape the assistant: its personality, its
-      language, and your house rules. Write it like you'd brief a person. Two
-      tips that matter on a voice device: lock the language ("Speak and
-      understand only Dutch. Never switch language.") and tell it to use its
-      tools silently instead of saying "one moment". EDITING TIP: this field
-      is a single line here (a Home Assistant UI limitation) — for comfortable
-      editing use the ⋮ menu at the top of this tab → "Edit in YAML", which
-      gives you a full text editor.
+      Custom language and house rules; choose a persona with the separate
+      Personality option. Voice Rules (short spoken replies, silent tool use)
+      are always applied, including with custom instructions. For another
+      language, change the LANGUAGE rule here. This field is one line in the
+      add-on UI; use ⋮ → "Edit in YAML" for a full text editor.
+  personality:
+    name: "🔑 Basics · Personality"
+    description: >-
+      Choose the assistant's character: standard (neutral), monday (dry wit),
+      cat (playful cat), or monday_cat (both). Defaults to monday. Voice Rules
+      still apply to every persona; use Custom instructions for house rules.
   transcription_language:
     name: "🔑 Basics · Spoken language (e.g. nl, en, de)"
     description: >-
@@ -179,6 +182,13 @@ configuration:
       all of them. With the built-in MCP server you can leave this empty.
       Mainly useful with the ha-mcp add-on (80+ tools) to keep conversations
       fast and cheap.
+  home_location:
+    name: "🏠 Home Assistant · Home location"
+    description: >-
+      Optional town or region for local answers and web searches (e.g.
+      "Amsterdam, NL"). Leave empty if no place should be assumed; Home
+      Assistant's home name is not necessarily a city. Set your time zone
+      in Home Assistant for accurate local time.
 
   # --- ⚙️ Advanced ---
   websocket_port:

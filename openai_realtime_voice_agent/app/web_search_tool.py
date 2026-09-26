@@ -52,7 +52,7 @@ def get_web_search_tool_definition() -> Dict[str, Any]:
 
 
 def create_web_search_tool_handler(
-    api_key: str, model: str
+    api_key: str, model: str, home_location: str = ""
 ) -> Callable[["FunctionCallParams"], Awaitable[None]]:
     """Create a web_search handler for pipecat's OpenAIRealtimeLLMService.
 
@@ -67,7 +67,7 @@ def create_web_search_tool_handler(
         logger.info(f"🔎 web_search called: {query!r} (model={model})")
 
         if not query:
-            await params.result_callback("Geen zoekopdracht ontvangen.")
+            await params.result_callback("No search query received.")
             return
 
         try:
@@ -77,14 +77,17 @@ def create_web_search_tool_handler(
                 input=(
                     "Answer in at most 2 short sentences suitable for being read "
                     "aloud, in the same language as the question. Do not include "
-                    "URLs, citations, or markdown. Question: " + query
+                    "URLs, citations, or markdown. "
+                    + (f"If the question doesn't name a place, assume it's about {home_location}. "
+                       if home_location else "")
+                    + "Question: " + query
                 ),
             )
             answer = (getattr(response, "output_text", None) or "").strip()
             logger.info(f"🔎 web_search answer: {answer[:200]}")
-            await params.result_callback(answer or "Ik kon hier online niets over vinden.")
+            await params.result_callback(answer or "I couldn't find anything about that online.")
         except Exception as e:
             logger.error(f"❌ web_search failed: {e}", exc_info=True)
-            await params.result_callback("Het zoeken op internet lukte even niet.")
+            await params.result_callback("The internet search failed just now.")
 
     return web_search_tool_handler
