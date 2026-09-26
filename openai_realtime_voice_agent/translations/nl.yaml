@@ -36,9 +36,11 @@ configuration:
   openai_model:
     name: "🗣️ Model & stem · Model"
     description: >-
-      Het OpenAI-model dat luistert en praat. gpt-realtime-2 (standaard) is
-      het nieuwste en slimste. gpt-realtime-mini is merkbaar goedkoper maar
-      minder slim. Wil je een model dat er niet tussen staat? Kies "custom"
+      Het OpenAI-model dat luistert en praat. gpt-realtime-2 is de standaard.
+      gpt-realtime-2.1 (juli 2026) is nieuwer, met betere herkenning van
+      letters en cijfers, betere omgang met ruis en onderbrekingen, en betere
+      tool-aanroepen. gpt-realtime-2.1-mini is veel goedkoper en ondersteunt,
+      anders dan gpt-realtime-mini, redeneren en tools. Wil je een model dat er niet tussen staat? Kies "custom"
       en zet onderaan deze pagina "Toon ongebruikte optionele
       configuratie-opties" aan om het custom-veld zichtbaar te maken.
   openai_model_custom:

@@ -76,7 +76,7 @@ option has plain-language inline help.
 
 | Option | Default | Note |
 |---|---|---|
-| `openai_model` | `gpt-realtime-2` | newest speech-to-speech model |
+| `openai_model` | `gpt-realtime-2` | speech-to-speech model; `gpt-realtime-2.1` is newer, `gpt-realtime-2.1-mini` is the low-cost option with tool use |
 | `openai_voice` | `marin` | `marin`/`cedar` are the newest voices |
 | `transcription_language` | *(blank)* | set your ISO code (e.g. `nl`): locks the language + logs the user transcript |
 | `instructions` | *(English default)* | custom language/house rules; change the LANGUAGE line for your language; Voice Rules always apply |

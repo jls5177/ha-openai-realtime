@@ -37,9 +37,11 @@ configuration:
   openai_model:
     name: "🗣️ Model & voice · Model"
     description: >-
-      The OpenAI model that listens and talks. gpt-realtime-2 (default) is the
-      newest and smartest. gpt-realtime-mini is noticeably cheaper but less
-      capable. Want a model that's not listed? Pick "custom", then enable
+      The OpenAI model that listens and talks. gpt-realtime-2 is the default.
+      gpt-realtime-2.1 (July 2026) is newer, with better recognition of
+      letters and numbers, better noise and interruption handling, and better
+      tool calling. gpt-realtime-2.1-mini is much cheaper, and unlike
+      gpt-realtime-mini it supports reasoning and tool use. Want a model that's not listed? Pick "custom", then enable
       "Show unused optional configuration options" at the bottom of this page
       to reveal the custom field.
   openai_model_custom:
