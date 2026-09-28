@@ -125,7 +125,48 @@ If a request was sent but the acknowledgement was lost, the assistant checks the
 timer list before retrying rather than creating a duplicate.
 When several timers share a name, the assistant asks which one to cancel.
 
-## 6. Options reference & tuning
+## 6. Announcements
+
+Announcements use the selected personality to rephrase your message without changing facts,
+then speak it through OpenAI text-to-speech. **The voice is AI-generated** and may sound
+slightly different from the realtime conversation voice. A compatible satellite advertises
+the `announce` capability; older firmware cannot play announcements.
+
+Install and configure the Home Assistant MQTT integration and an MQTT broker accessible to
+the add-on. With **MQTT discovery** enabled, each known satellite has an “Announce” notify
+entity and there is an “All satellites” entity. Disconnected devices are unavailable.
+The ESPHome action works even if there is no broker:
+
+```yaml
+action: notify.send_message
+target:
+  entity_id: notify.kitchen_announce
+data:
+  message: "Dinner is ready at 7:30."
+```
+
+To announce on several devices use `entity_id: [notify.kitchen_announce,
+notify.office_announce]`; to target a room, choose the corresponding announcer
+device's area in Home Assistant; to target every connected satellite use
+`entity_id: notify.all_satellites_announce`. An MQTT message containing `?`
+opens the device's follow-up listening window; other messages do not.
+
+For the ESPHome device action (substitute the device's actual action name):
+
+```yaml
+action: esphome.kitchen_announce
+data:
+  message: "Dinner is ready. Coming?"
+  chime: true
+  follow_up: auto  # auto, always, or never
+```
+
+Messages are limited to 500 characters (longer text is shortened at a word
+boundary); pending announcements expire after five minutes. Each satellite
+can have five pending announcements, with ten targets pending globally.
+Failures are logged and reported as rate-limited Home Assistant notifications.
+
+## 7. Options reference & tuning
 
 Every option has a description on the **Configuration** tab. The ones worth knowing:
 
@@ -194,7 +235,7 @@ Every option has a description on the **Configuration** tab. The ones worth know
   extra in a custom add-on image before enabling it. If unavailable, the add-on
   logs a warning and runs without Tail.
 
-## 7. Reading the logs
+## 8. Reading the logs
 
 The add-on log shows each turn: `🗣️ user:` (when transcription language is set),
 `🤖 assistant:` (the reply text), `📞 phase ->` (device state), tool calls, and
