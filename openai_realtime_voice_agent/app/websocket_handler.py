@@ -334,6 +334,7 @@ class ConnectionRecovery(FrameProcessor):
                 quiet = now - self._last_input_audio
                 busy = getattr(self._service, "_current_assistant_response", None) is not None
                 if (age >= self.REFRESH_AGE_S and quiet >= self.REFRESH_QUIET_S
+                        and not getattr(self._service, "announcement_active", False)
                         and not busy and now - self._last_attempt >= self.RECONNECT_COOLDOWN_S):
                     self._reconnecting = True
                     self._last_attempt = now
@@ -710,6 +711,8 @@ class WebSocketHandler:
         _kill_next_response = {"v": False}
 
         async def _on_device_interrupt():
+            if self.session is not None and self.session.announcement_active:
+                return
             phase_emitter.reset_user_speaking()
             _interrupt_kill_until["t"] = time.monotonic() + INTERRUPT_KILL_WINDOW_S
             # Arm the next-response kill on EVERY stop (see the flag comment):
@@ -736,6 +739,11 @@ class WebSocketHandler:
             # ASSISTANT item right after a device interrupt is the racing
             # response to the stop word the user just cancelled.
             if getattr(item, "role", None) != "assistant":
+                return
+            if self.session is not None and (
+                item_id in self.session.kill_exempt_ids or self.session.announcement_active
+            ):
+                self.session.kill_exempt_ids.discard(item_id)
                 return
             within_window = time.monotonic() < _interrupt_kill_until["t"]
             kill_armed = _kill_next_response["v"]

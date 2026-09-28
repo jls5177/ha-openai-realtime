@@ -142,6 +142,12 @@ class DeviceSession:
         self._run_task = None
         self._close_task = None
         self._area_task = None
+        self._announcement_queue = None
+        self._announcement_reply = None
+        self._announcement_id = None
+        self._announcement_generation = None
+        self.announcement_active = False
+        self.kill_exempt_ids = set()
         self._writes = asyncio.Queue(maxsize=128)
         self._writer_task = asyncio.create_task(self._write_loop(), name=f"ws-writer:{mac}")
         self.counters = defaultdict(int)
@@ -158,6 +164,9 @@ class DeviceSession:
 
     def on_phase(self, phase):
         self.increment("phase_transitions")
+        if phase == "idle" and self._announcement_reply is not None and not self._announcement_reply.done():
+            if self.announcement_active:
+                self._announcement_reply.set_result("idle")
         if phase == "listening":
             self._turn_start = time.monotonic()
         elif phase == "replying" and self._turn_start is not None:
@@ -288,6 +297,8 @@ class DeviceSession:
         if self._closed:
             return
         await self.serializer.deserialize('{"type":"start"}')
+        if getattr(self.app, "announcements", None):
+            self.app.announcements.start_session(self)
 
     def _pipeline_finished(self, task):
         if self._closed:
@@ -310,6 +321,8 @@ class DeviceSession:
         self._closed = True
         try:
             await self._starting.wait()
+            if getattr(self.app, "announcements", None) and self in self.app.announcements.dispatchers:
+                await self.app.announcements.stop_session(self)
             if self.handler and self.handler._area_task:
                 self.handler._area_task.cancel()
                 await asyncio.gather(self.handler._area_task, return_exceptions=True)
