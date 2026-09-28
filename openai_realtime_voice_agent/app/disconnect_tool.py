@@ -94,6 +94,14 @@ def create_disconnect_callback(
             if transport is None:
                 logger.warning("⚠️ No transport available for disconnect")
                 return
+            if hasattr(transport, "session"):
+                session = transport.session
+                await session.send_json({
+                    "type": "disconnect", "message": "User requested disconnect",
+                    "reason": reason,
+                })
+                await session.websocket.close()
+                return
             
             from pipecat.transports.websocket.server import WebsocketServerTransport
             if not isinstance(transport, WebsocketServerTransport):

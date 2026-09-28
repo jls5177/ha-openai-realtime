@@ -23,6 +23,11 @@ def validated_start(data: dict) -> dict:
             start["name"] = data["name"]
         else:
             logger.warning("Device start has an invalid name; ignoring it")
+    if isinstance(data.get("caps"), list):
+        start["caps"] = [
+            cap for cap in data["caps"][:16]
+            if isinstance(cap, str) and len(cap) <= 32
+        ]
     return start
 
 
@@ -69,6 +74,7 @@ class RawAudioSerializer(FrameSerializer):
         self._on_wake = None
         # Timer control frames share the TEXT channel with wake/flush.
         self._on_timer_message = None
+        self._on_device_message = None
 
     def set_interrupt_handler(self, handler):
         """Register the async no-arg callback fired on a device 'interrupt'."""
@@ -89,6 +95,10 @@ class RawAudioSerializer(FrameSerializer):
     def set_timer_message_handler(self, handler):
         """Register the callback for parsed device timer control messages."""
         self._on_timer_message = handler
+
+    def set_device_message_handler(self, handler):
+        """Subscribe to otherwise unhandled JSON control messages."""
+        self._on_device_message = handler
 
     @property
     def type(self) -> FrameSerializerType:
@@ -161,6 +171,12 @@ class RawAudioSerializer(FrameSerializer):
             ):
                 if self._on_timer_message is not None:
                     self._on_timer_message(data)
+            elif isinstance(data, dict) and data.get("type") == "ping":
+                if self._on_device_message:
+                    await self._on_device_message("ping", data)
+            elif isinstance(data, dict) and isinstance(data.get("type"), str):
+                if self._on_device_message:
+                    await self._on_device_message(data["type"], data)
             # interrupt / ping / start / other control frames: nothing to inject.
             return None
 

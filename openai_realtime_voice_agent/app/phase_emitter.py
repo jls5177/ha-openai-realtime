@@ -80,14 +80,13 @@ logger = logging.getLogger(__name__)
 
 
 class TurnLiveness:
-    """Shared "is the model still doing something?" signal for the watchdog.
+    """Per-session "is the model still doing something?" signal for the watchdog.
 
     Tool handlers are wrapped (see SafeRealtimeLLMService.register_function in
     main.py) to tick this on start/finish. The PhaseEmitter's thinking
     watchdog reads it so a slow tool — web search regularly takes 10-20 s with
     zero pipeline traffic — is never mistaken for a dead turn, and so each
-    step of a long tool chain refreshes the window. Module-level singleton:
-    one pipeline per process.
+    step of a long tool chain refreshes the window.     Each pipeline owns its own instance.
     """
 
     def __init__(self) -> None:
@@ -101,9 +100,6 @@ class TurnLiveness:
     def tool_finished(self) -> None:
         self.in_flight = max(0, self.in_flight - 1)
         self.last_activity = time.monotonic()
-
-
-TURN_LIVENESS = TurnLiveness()
 
 
 class PhaseEmitter(FrameProcessor):
@@ -121,7 +117,8 @@ class PhaseEmitter(FrameProcessor):
     INFLIGHT_LOG_EVERY_S = 30.0
 
     def __init__(self, send_phase, idle_debounce_s: float = None,
-                 interrupt_response: bool = False, send_audio_done=None, **kwargs):
+                 interrupt_response: bool = False, send_audio_done=None,
+                 liveness=None, on_phase=None, **kwargs):
         """
         Args:
             send_phase: async callable(value: str) that delivers the phase to
@@ -138,6 +135,8 @@ class PhaseEmitter(FrameProcessor):
         super().__init__(**kwargs)
         self._send_phase = send_phase
         self._send_audio_done = send_audio_done
+        self.liveness = liveness or TurnLiveness()
+        self._on_phase = on_phase
         self._interrupt_response = interrupt_response
         self._user_speaking = False
         if idle_debounce_s is None:
@@ -217,6 +216,8 @@ class PhaseEmitter(FrameProcessor):
         if value == self._current and value != "listening":
             return
         self._current = value
+        if self._on_phase is not None:
+            self._on_phase(value)
         logger.info(f"📞 phase -> {value}")  # TEMP instrumentation
         if self._send_phase is not None:
             try:
@@ -254,7 +255,7 @@ class PhaseEmitter(FrameProcessor):
         # while a tool is in flight); the tool's result response then flips the
         # phase to `replying`. Fast tools never reach here — their result reply
         # cancels this debounce first.
-        if TURN_LIVENESS.in_flight > 0:
+        if self.liveness.in_flight > 0:
             await self._emit("thinking")
             self._arm_watchdog()
             return
@@ -270,8 +271,8 @@ class PhaseEmitter(FrameProcessor):
                 if self._current != "thinking":
                     return  # phase moved on — turn is alive, watchdog done
                 now = time.monotonic()
-                last = max(armed_at, TURN_LIVENESS.last_activity)
-                if TURN_LIVENESS.in_flight > 0:
+                last = max(armed_at, self.liveness.last_activity)
+                if self.liveness.in_flight > 0:
                     # A tool is running — the turn is alive by definition, and
                     # a long web search must get all the time it needs (no
                     # cap; see the module docstring). Log occasionally so a
@@ -279,7 +280,7 @@ class PhaseEmitter(FrameProcessor):
                     if now - last_inflight_log >= self.INFLIGHT_LOG_EVERY_S:
                         last_inflight_log = now
                         logger.info(
-                            f"⏳ thinking-watchdog: {TURN_LIVENESS.in_flight} tool(s) "
+                            f"⏳ thinking-watchdog: {self.liveness.in_flight} tool(s) "
                             f"running for {now - last:.0f}s — waiting (no cap)"
                         )
                     continue

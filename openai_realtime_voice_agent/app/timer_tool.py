@@ -171,7 +171,10 @@ class TimerBridge:
         self._pending[request_id] = (future, socket)
         try:
             async def send_and_wait():
-                await socket.send(json.dumps(payload, separators=(",", ":")))
+                if getattr(self._handler, "session", None) is not None:
+                    await self._handler.session.send_json(payload)
+                else:
+                    await socket.send(json.dumps(payload, separators=(",", ":")))
                 return await future
 
             ack = await asyncio.wait_for(send_and_wait(), ACK_TIMEOUT_S)

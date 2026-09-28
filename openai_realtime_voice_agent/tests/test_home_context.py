@@ -11,10 +11,16 @@ import app.home_context as home_context
 
 
 DEVICES = [
-    {"connections": [["mac", "AA:BB:CC:DD:EE:FF"]], "area_id": "kitchen"},
-    {"connections": [["mac", "11:22:33:44:55:66"]], "area_id": None},
+    {"connections": [["mac", "AA:BB:CC:DD:EE:FF"]], "area_id": "other",
+     "config_entries": ["mqtt"]},
+    {"connections": [["mac", "AA:BB:CC:DD:EE:FF"]], "area_id": "kitchen",
+     "config_entries": ["esphome"]},
+    {"connections": [["mac", "11:22:33:44:55:66"]], "area_id": None,
+     "config_entries": ["esphome"]},
 ]
 AREAS = [{"area_id": "kitchen", "name": "Kitchen"}]
+ENTRIES = [{"entry_id": "esphome", "domain": "esphome"},
+           {"entry_id": "mqtt", "domain": "mqtt"}]
 
 
 @pytest.mark.parametrize(
@@ -27,8 +33,8 @@ AREAS = [{"area_id": "kitchen", "name": "Kitchen"}]
     ],
 )
 def test_find_device_area(mac, expected):
-    assert find_device_area(DEVICES, AREAS, mac) == expected
-    assert find_device_area(DEVICES, [], mac) is None
+    assert find_device_area(DEVICES, AREAS, mac, ENTRIES) == expected
+    assert find_device_area(DEVICES, [], mac, ENTRIES) is None
 
 
 def test_home_config_resolution():
@@ -99,6 +105,7 @@ def test_one_shot_area_lookup_auth_and_registry_requests(monkeypatch):
             {"type": "auth_ok"},
             {"type": "result", "id": 1, "success": True, "result": DEVICES},
             {"type": "result", "id": 2, "success": True, "result": AREAS},
+            {"type": "result", "id": 3, "success": True, "result": ENTRIES},
         ]
         sent = []
 
@@ -127,6 +134,7 @@ def test_one_shot_area_lookup_auth_and_registry_requests(monkeypatch):
             {"type": "auth", "access_token": "secret"},
             {"id": 1, "type": "config/device_registry/list"},
             {"id": 2, "type": "config/area_registry/list"},
+            {"id": 3, "type": "config/config_entries/get"},
         ]
 
     asyncio.run(scenario())

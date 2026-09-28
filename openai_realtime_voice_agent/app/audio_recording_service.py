@@ -1,5 +1,8 @@
 """Audio recording service."""
 import logging
+import queue
+import threading
+import contextvars
 from datetime import datetime
 from typing import Optional
 
@@ -8,6 +11,70 @@ from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame
 from app.audio_recorder import AudioRecorder
 
 logger = logging.getLogger(__name__)
+
+
+class QueuedAudioRecorder:
+    """Bounded non-blocking enqueue; all WAV I/O runs on this recorder's thread."""
+
+    def __init__(self, output_dir):
+        self.output_dir = output_dir
+        self.queue = queue.Queue(maxsize=512)
+        self.thread = None
+
+    def start_recording(self, client_id):
+        context = contextvars.copy_context()
+        self.thread = threading.Thread(
+            target=lambda: context.run(self._write, client_id), daemon=True,
+            name=f"wav-writer:{client_id}"
+        )
+        self.thread.start()
+
+    def _write(self, client_id):
+        recorder = AudioRecorder(self.output_dir)
+        try:
+            recorder.start_recording(client_id)
+            while True:
+                item = self.queue.get()
+                if item is None:
+                    break
+                kind, audio = item
+                if kind == "input":
+                    recorder.record_input_audio(audio)
+                else:
+                    recorder.record_output_audio(audio)
+        except Exception:
+            logger.exception("WAV writer failed")
+        finally:
+            recorder.stop_recording()
+
+    def _enqueue(self, kind, audio):
+        try:
+            self.queue.put_nowait((kind, audio))
+        except queue.Full:
+            logger.warning("WAV writer queue full; dropping audio")
+
+    def record_input_audio(self, audio):
+        self._enqueue("input", audio)
+
+    def record_output_audio(self, audio):
+        self._enqueue("output", audio)
+
+    def stop_recording(self):
+        if self.thread:
+            try:
+                self.queue.put(None, timeout=1)
+            except queue.Full:
+                logger.warning("WAV writer is stalled; discarding queued audio on shutdown")
+                while not self.queue.empty():
+                    try:
+                        self.queue.get_nowait()
+                    except queue.Empty:
+                        break
+                self.queue.put_nowait(None)
+            self.thread.join(timeout=2)
+            if self.thread.is_alive():
+                logger.error("WAV writer did not stop within 2 seconds")
+            self.thread = None
 
 
 class AudioFrameRecorder(FrameProcessor):
@@ -52,7 +119,7 @@ class AudioFrameRecorder(FrameProcessor):
 
 
 class AudioRecordingService:
-    """Service for recording audio using Pipecat's AudioBufferProcessor."""
+    """Per-device WAV recording with non-blocking frame enqueue."""
     
     def __init__(
         self,
@@ -85,7 +152,7 @@ class AudioRecordingService:
     def _initialize_recording(self):
         """Initialize audio recording components."""
         # Create audio recorder
-        self.audio_recorder = AudioRecorder(output_dir=self.output_dir)
+        self.audio_recorder = QueuedAudioRecorder(output_dir=self.output_dir)
         
         # Create audio frame recorders for input and output
         self.input_recorder = AudioFrameRecorder(
@@ -122,7 +189,7 @@ class AudioRecordingService:
         # Create new recorder for this session
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         session_id = client_id or f"session_{timestamp}"
-        self.audio_recorder = AudioRecorder(output_dir=self.output_dir)
+        self.audio_recorder = QueuedAudioRecorder(output_dir=self.output_dir)
         self.audio_recorder.start_recording(client_id=session_id)
         
         # Update recorders with new audio_recorder instance

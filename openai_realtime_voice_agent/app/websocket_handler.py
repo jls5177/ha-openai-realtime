@@ -3,17 +3,16 @@ import asyncio
 import json
 import logging
 import time
-import uuid
-from typing import Optional, Callable, Awaitable, Dict
+from typing import Optional, Callable
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
-from pipecat.pipeline.task import PipelineTask
-from pipecat.transports.websocket.server import WebsocketServerTransport, WebsocketServerParams
+from pipecat.pipeline.task import PipelineTask, PipelineParams
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 
 from pipecat.processors.frame_processor import FrameProcessor, FrameDirection
-from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, ErrorFrame
+from pipecat.frames.frames import Frame, InputAudioRawFrame, OutputAudioRawFrame, StartFrame, EndFrame, ErrorFrame, MetricsFrame
+from pipecat.metrics.metrics import LLMUsageMetricsData
 from pipecat.audio.utils import create_stream_resampler
 from pipecat.services.openai.realtime import events as openai_rt_events
 
@@ -64,6 +63,21 @@ class SessionActivityTracker(FrameProcessor):
             logger.debug(f"🎵 SessionActivityTracker: Processing {type(frame).__name__} ({len(frame.audio)} bytes)")
         
         # Pass frame through to next processor
+        await self.push_frame(frame, direction)
+
+
+class SessionMetrics(FrameProcessor):
+    def __init__(self, session):
+        super().__init__()
+        self.session = session
+
+    async def process_frame(self, frame, direction):
+        await super().process_frame(frame, direction)
+        if isinstance(frame, MetricsFrame):
+            for item in frame.data:
+                if isinstance(item, LLMUsageMetricsData):
+                    for key in ("prompt_tokens", "completion_tokens", "total_tokens"):
+                        self.session.counters[key] += getattr(item.value, key, 0) or 0
         await self.push_frame(frame, direction)
 
 
@@ -173,7 +187,8 @@ class ConnectionRecovery(FrameProcessor):
     REFRESH_QUIET_S = 60.0    # ... and no mic audio flowed for this long
     REFRESH_CHECK_S = 60.0    # poll cadence of the background check
 
-    def __init__(self, openai_service, emit_idle=None, phase_emitter=None, **kwargs):
+    def __init__(self, openai_service, emit_idle=None, phase_emitter=None,
+                 on_reconnect=None, on_error=None, **kwargs):
         super().__init__(**kwargs)
         self._service = openai_service
         self._emit_idle = emit_idle  # async callable(value:str), e.g. broadcast_phase
@@ -183,6 +198,8 @@ class ConnectionRecovery(FrameProcessor):
         # overridden 400 ms later and the device sat in `thinking` with an
         # open mic for 44 s). emit_idle stays as fallback wiring.
         self._phase_emitter = phase_emitter
+        self._on_reconnect = on_reconnect
+        self._on_error = on_error
         self._reconnecting = False
         self._last_attempt = 0.0
         self._last_idle_unstick = 0.0
@@ -196,11 +213,28 @@ class ConnectionRecovery(FrameProcessor):
         # mic during an active turn or the follow-up window).
         self._last_input_audio = time.monotonic()
         self._refresh_task = None
+        self._tasks = set()
+
+    def _spawn(self, coroutine):
+        task = asyncio.create_task(coroutine)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
+
+    async def shutdown(self):
+        for task in list(self._tasks):
+            task.cancel()
+        if self._refresh_task:
+            self._refresh_task.cancel()
+        await asyncio.gather(
+            *(task for task in (*self._tasks, self._refresh_task) if task is not None),
+            return_exceptions=True,
+        )
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
         await super().process_frame(frame, direction)
         if self._refresh_task is None:
-            self._refresh_task = asyncio.create_task(self._proactive_refresh_loop())
+            self._refresh_task = self._spawn(self._proactive_refresh_loop())
         if isinstance(frame, InputAudioRawFrame):
             # Only kept for the proactive-refresh "is anyone interacting?" check.
             # (Stale-audio clearing is now done at the cut-off source — the device
@@ -208,6 +242,8 @@ class ConnectionRecovery(FrameProcessor):
             # reactively on mic-resume, which disturbed the VAD and caused garbage.)
             self._last_input_audio = time.monotonic()
         if isinstance(frame, ErrorFrame) and not self._reconnecting:
+            if self._on_error:
+                self._on_error()
             msg = str(getattr(frame, "error", "") or "")
             # Two reconnect triggers:
             #  (a) the OpenAI send-side flood ("Error sending client event: …" +
@@ -232,7 +268,7 @@ class ConnectionRecovery(FrameProcessor):
                 if now - self._last_attempt >= self.RECONNECT_COOLDOWN_S:
                     self._reconnecting = True
                     self._last_attempt = now
-                    asyncio.create_task(self._recover(msg))
+                    self._spawn(self._recover(msg))
             else:
                 # Non-connection-death error that ENDS a turn without a reply:
                 # most importantly an OpenAI rate-limit ("Rate limit reached …"),
@@ -245,7 +281,7 @@ class ConnectionRecovery(FrameProcessor):
                 now = time.monotonic()
                 if now - self._last_idle_unstick >= self.IDLE_UNSTICK_COOLDOWN_S:
                     self._last_idle_unstick = now
-                    asyncio.create_task(self._unstick_idle(msg))
+                    self._spawn(self._unstick_idle(msg))
         await self.push_frame(frame, direction)
 
     async def _recover(self, reason: str):
@@ -266,6 +302,8 @@ class ConnectionRecovery(FrameProcessor):
                 logger.error("❌ service has no reset_conversation(); cannot reconnect in place")
                 return
             await reset()
+            if self._on_reconnect:
+                self._on_reconnect()
             self._connected_at = time.monotonic()
             logger.info(
                 f"✅ OpenAI Realtime session reconnected in {self._connected_at - t0:.1f}s "
@@ -343,6 +381,7 @@ class WebSocketHandler:
         follow_up_open_delay_ms: int = 700,
         wake_open_delay_ms: int = 700,
         playback_prebuffer_ms: int = 0,
+        session=None,
     ):
         """
         Initialize WebSocket handler.
@@ -372,8 +411,9 @@ class WebSocketHandler:
         self.follow_up_open_delay_ms = max(0, int(follow_up_open_delay_ms))
         self.wake_open_delay_ms = max(0, int(wake_open_delay_ms))
         self.playback_prebuffer_ms = max(0, int(playback_prebuffer_ms))
+        self.session = session
 
-        self.transport: Optional[WebsocketServerTransport] = None
+        self.transport = None
         self.pipeline: Optional[Pipeline] = None
         self.runner: Optional[PipelineRunner] = None
         self.current_task: Optional[PipelineTask] = None
@@ -390,6 +430,10 @@ class WebSocketHandler:
         self._area_task: asyncio.Task | None = None
         self._area_generation = 0
         self._context_aggregator = None
+        if session is not None:
+            self._serializer = session.serializer
+            self._websockets.add(session.websocket)
+            self.timer_bridge.connected(session.websocket)
 
     def configure_instructions(self, *, instructions: str, personality: str,
                                home_location: str, time_zone: str | None,
@@ -440,6 +484,9 @@ class WebSocketHandler:
         if generation != self._area_generation:
             return
         logger.info("Satellite area: %s", area or "unknown")
+        if self.session is not None:
+            self.session.metadata.area = area
+            self.session.registry.notify("updated", self.session.metadata)
         if area:
             try:
                 await apply_instructions(
@@ -448,42 +495,9 @@ class WebSocketHandler:
             except Exception:
                 logger.exception("Could not apply satellite area to the live session")
     
-    def create_transport(self) -> WebsocketServerTransport:
-        """
-        Create and initialize WebSocket transport.
-        
-        Returns:
-            WebsocketServerTransport instance
-        """
-        logger.info("Initializing WebSocket transport...")
-        
-        # Use RawAudioSerializer for binary PCM audio. It tags incoming frames
-        # with the device mic rate (16 kHz for Voice PE); the transport
-        # resamples in/out to the 24 kHz pipeline rate below.
-        serializer = RawAudioSerializer()
-        self._serializer = serializer
-        serializer.set_timer_message_handler(self.timer_bridge.handle_message)
-
-        # Create WebsocketServerTransport with WebsocketServerParams
-        # The transport will start its own server automatically
-        self.transport = WebsocketServerTransport(
-            host=self.host,
-            port=self.port,
-            params=WebsocketServerParams(
-                serializer=serializer,
-                audio_in_enabled=True,
-                audio_out_enabled=True,
-                audio_in_sample_rate=PIPELINE_SAMPLE_RATE,
-                audio_out_sample_rate=PIPELINE_SAMPLE_RATE,
-            )
-        )
-        
-        logger.info(f"✅ WebSocket transport created - will listen on ws://{self.host}:{self.port}/")
-        return self.transport
-    
     def build_pipeline(
         self,
-        transport: WebsocketServerTransport,
+        transport,
         openai_service: OpenAIRealtimeLLMService,
         client_id: str,
         activity_callback: Optional[Callable[[], None]] = None
@@ -538,16 +552,27 @@ class WebSocketHandler:
             send_phase=self.broadcast_phase,
             send_audio_done=self.broadcast_audio_done,
             interrupt_response=self.interrupt_response,
+            liveness=self.session.liveness if self.session else None,
+            on_phase=self.session.on_phase if self.session else None,
         )
         self._phase_emitter = phase_emitter
+        if self.session:
+            self.session.phase_emitter = phase_emitter
 
+        recovery = ConnectionRecovery(
+            openai_service=openai_service, emit_idle=self.broadcast_phase,
+            phase_emitter=phase_emitter,
+            on_reconnect=(lambda: self.session.increment("openai_reconnects"))
+            if self.session else None,
+            on_error=(lambda: self.session.increment("errors")) if self.session else None,
+        )
+        self.recovery = recovery
         pipeline_components = [
             transport.input(),
             # Watch for OpenAI connection-death ErrorFrames (they travel upstream
             # to the task source, so place this upstream of the service) and
             # reconnect in place. Without it a 1011/1001 drop bricks the session.
-            ConnectionRecovery(openai_service=openai_service, emit_idle=self.broadcast_phase,
-                               phase_emitter=phase_emitter),
+            recovery,
             InputResampler(out_rate=PIPELINE_SAMPLE_RATE),
             input_activity_tracker,
         ]
@@ -586,6 +611,8 @@ class WebSocketHandler:
         # user (UserStarted/Stopped) and bot (BotStarted/Stopped) frames.
         # (Constructed above, before ConnectionRecovery.)
         pipeline_components.append(phase_emitter)
+        if self.session:
+            pipeline_components.append(SessionMetrics(self.session))
 
         # Add output audio recorder to capture ONLY OutputAudioRawFrame
         output_recorder = self.audio_recording_service.get_output_recorder() if self.audio_recording_service else None
@@ -607,12 +634,14 @@ class WebSocketHandler:
         
         # Create pipeline runner and task
         # Disable idle timeout - server should always stay ready for connections
-        runner = PipelineRunner()
-        task = PipelineTask(pipeline, idle_timeout_secs=None, cancel_on_idle_timeout=False)
-        
-        # Start pipeline in background
-        asyncio.create_task(runner.run(task))
-        logger.info("✅ Pipeline started for WebSocket connection")
+        runner = PipelineRunner(handle_sigint=False)
+        task = PipelineTask(
+            pipeline, idle_timeout_secs=None, cancel_on_idle_timeout=False,
+            params=PipelineParams(enable_metrics=True, enable_usage_metrics=True,
+                                  audio_in_sample_rate=PIPELINE_SAMPLE_RATE,
+                                  audio_out_sample_rate=PIPELINE_SAMPLE_RATE),
+            observers=self.session.observers if self.session else None,
+        )
         logger.info("✅ Pipeline initialized successfully")
 
         # Wire the device "stop" interrupt. The serializer calls this when it
@@ -733,7 +762,8 @@ class WebSocketHandler:
             # with a clean one. The per-WAKE/follow-up stale-buffer case is
             # covered by the device's {"type":"flush"} on follow-up timeout.
             phase_emitter.reset_user_speaking()
-            self.start_area_lookup(openai_service, start)
+            if self.session is None:
+                self.start_area_lookup(openai_service, start)
             try:
                 await openai_service.send_client_event(openai_rt_events.InputAudioBufferClearEvent())
                 logger.info("🎬 device (re)connected → input_audio_buffer.clear (clean start)")
@@ -791,28 +821,6 @@ class WebSocketHandler:
 
         return pipeline, runner, task
     
-    def extract_client_id(self, websocket) -> str:
-        """
-        Extract client ID from websocket connection.
-        
-        Args:
-            websocket: WebSocket connection object
-            
-        Returns:
-            Client ID string
-        """
-        client_ip = None
-        if hasattr(websocket, 'client') and websocket.client:
-            client_ip = websocket.client.host
-        elif hasattr(websocket, 'remote_address'):
-            client_ip = str(websocket.remote_address[0]) if websocket.remote_address else None
-        
-        if not client_ip:
-            client_ip = f"unknown_{uuid.uuid4().hex[:8]}"
-            logger.warning("⚠️ Could not extract client IP, using generated ID")
-
-        return client_ip
-
     async def _send_json(self, websocket, obj: dict) -> None:
         """Send a JSON object to one device as a TEXT websocket frame.
 
@@ -825,7 +833,10 @@ class WebSocketHandler:
         device (LED stuck idle, no-speech watchdog never cancelled).
         """
         try:
-            await websocket.send(json.dumps(obj, separators=(",", ":")))
+            if self.session is not None:
+                await self.session.send_json(obj)
+            else:
+                await websocket.send(json.dumps(obj, separators=(",", ":")))
         except Exception as e:
             logger.warning(f"⚠️ Could not send {obj.get('type')} to device: {e!r}")
 
@@ -844,151 +855,3 @@ class WebSocketHandler:
     async def broadcast_audio_done(self) -> None:
         """Notify the device of bot audio completion without waiting for idle."""
         await self.broadcast_json({"type": "audio_done"})
-    
-    def setup_event_handlers(
-        self,
-        transport: WebsocketServerTransport,
-        on_client_connected_callback: Callable[[str], Awaitable[None]],
-        on_client_disconnected_callback: Optional[Callable[[str], None]] = None,
-        openai_service_getter: Optional[Callable[[str], Optional[OpenAIRealtimeLLMService]]] = None
-    ):
-        """
-        Setup WebSocket event handlers.
-        
-        Args:
-            transport: The WebSocket transport instance
-            on_client_connected_callback: Async callback function(client_id) called when client connects
-            on_client_disconnected_callback: Optional callback function(client_id) called when client disconnects
-            openai_service_getter: Optional function(client_id) -> OpenAIRealtimeLLMService to get service for interrupt
-        """
-        @transport.event_handler("on_client_connected")
-        async def on_client_connected(transport: WebsocketServerTransport, websocket):
-            """Handle new WebSocket client connection."""
-            client_id = self.extract_client_id(websocket)
-            logger.info(f"🔗 New WebSocket connection from IP: {client_id}")
-            # Track the raw connection so we can push phase/control TEXT frames.
-            self._websockets.add(websocket)
-            self.timer_bridge.connected(websocket)
-            if self._phase_emitter is not None:
-                self._phase_emitter.reset_user_speaking()
-            # Handshake ack expected by the va_client protocol (server -> device
-            # "hello"). The Voice PE firmware tolerates its absence, but sending
-            # it keeps both sides in lockstep with the documented protocol.
-            # follow_up_ms tells the device how long to keep the mic open after a
-            # reply (post-reply follow-up window); 0/absent = turn-based. Sent on
-            # every connect so an add-on config change takes effect on reconnect.
-            await self._send_json(
-                websocket,
-                {
-                    "type": "hello",
-                    "audio_out": "pcm",
-                    "interrupt_response": self.interrupt_response,
-                    "follow_up_ms": self.follow_up_ms,
-                    "follow_up_open_delay_ms": self.follow_up_open_delay_ms,
-                    "wake_open_delay_ms": self.wake_open_delay_ms,
-                    "playback_prebuffer_ms": self.playback_prebuffer_ms,
-                },
-            )
-            await on_client_connected_callback(client_id)
-
-        @transport.event_handler("on_client_disconnected")
-        async def on_client_disconnected(transport: WebsocketServerTransport, websocket, *args, **kwargs):
-            """Handle client disconnection."""
-            self._websockets.discard(websocket)
-            self.timer_bridge.disconnected(websocket)
-            if self._phase_emitter is not None:
-                self._phase_emitter.reset_user_speaking()
-            client_id = self.extract_client_id(websocket)
-            if client_id:
-                logger.info(f"🔌 Client {client_id} disconnected")
-                if on_client_disconnected_callback:
-                    on_client_disconnected_callback(client_id)
-        
-        # Handle text messages from client (e.g., interrupt messages)
-        @transport.event_handler("on_client_message")
-        async def on_client_message(transport: WebsocketServerTransport, websocket, message):
-            """Handle text messages from WebSocket client."""
-            try:
-                client_id = self.extract_client_id(websocket)
-                
-                # Try to parse as JSON
-                if isinstance(message, bytes):
-                    message = message.decode('utf-8')
-                
-                try:
-                    data = json.loads(message)
-                    message_type = data.get("type")
-
-                    if message_type in ("timer_ack", "timer_state", "timer_finished"):
-                        self.timer_bridge.handle_message(data)
-                        return
-
-                    if message_type == "interrupt":
-                        logger.info(f"🛑 Interrupt received from client {client_id}")
-                        
-                        # Get OpenAI service for this client
-                        openai_service = None
-                        if openai_service_getter:
-                            openai_service = openai_service_getter(client_id)
-                        
-                        if openai_service:
-                            # Send interrupt event to OpenAI Realtime API
-                            # The interrupt event tells OpenAI to stop speaking and listen for user input
-                            try:
-                                # Try to send interrupt event directly to the service
-                                # OpenAI Realtime API expects: {"type": "response.interrupt"}
-                                if hasattr(openai_service, 'send_interrupt'):
-                                    await openai_service.send_interrupt()
-                                    logger.info(f"✅ Interrupt sent to OpenAI service for client {client_id}")
-                                elif hasattr(openai_service, 'push_event'):
-                                    # Send interrupt event via push_event
-                                    await openai_service.push_event({"type": "response.interrupt"})
-                                    logger.info(f"✅ Interrupt event sent to OpenAI service for client {client_id}")
-                                elif hasattr(openai_service, '_send_event'):
-                                    # Try private method if available
-                                    await openai_service._send_event({"type": "response.interrupt"})
-                                    logger.info(f"✅ Interrupt sent via _send_event to OpenAI service for client {client_id}")
-                                else:
-                                    # Fallback: log warning
-                                    logger.warning(f"⚠️ Could not find method to send interrupt to OpenAI service. Available methods: {[m for m in dir(openai_service) if not m.startswith('__')]}")
-                            except Exception as e:
-                                logger.error(f"❌ Error sending interrupt to OpenAI service: {e}", exc_info=True)
-                        else:
-                            logger.warning(f"⚠️ No OpenAI service found for client {client_id}, cannot send interrupt")
-                    elif message_type == "start":
-                        # va_client sends {"type":"start"} on connect. The
-                        # pipeline already streams continuously with server VAD,
-                        # so there's nothing to start here — just acknowledge.
-                        logger.debug(f"▶️ start from client {client_id}")
-                    elif message_type == "ping":
-                        # Keepalive. Reply with pong on the same connection.
-                        await self._send_json(websocket, {"type": "pong"})
-                    else:
-                        logger.debug(f"📨 Received message from client {client_id}: {message_type}")
-                        
-                except json.JSONDecodeError:
-                    logger.debug(f"📨 Received non-JSON message from client {client_id}: {message[:100]}")
-                    
-            except Exception as e:
-                logger.error(f"❌ Error handling client message: {e}", exc_info=True)
-    
-    async def cleanup(self):
-        """Cleanup WebSocket handler resources."""
-        if self._area_task is not None:
-            self._area_task.cancel()
-            try:
-                await self._area_task
-            except asyncio.CancelledError:
-                pass
-        if self.runner:
-            try:
-                await self.runner.cancel()
-            except Exception as e:
-                logger.warning(f"⚠️ Error cancelling runner: {e}")
-        
-        if self.transport:
-            try:
-                if hasattr(self.transport, 'stop'):
-                    await self.transport.stop()
-            except Exception as e:
-                logger.warning(f"⚠️ Error stopping transport: {e}")

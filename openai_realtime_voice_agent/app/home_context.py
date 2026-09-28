@@ -81,7 +81,7 @@ def resolve_units(config: dict) -> str | None:
     return None
 
 
-def find_device_area(devices: list, areas: list, mac: str) -> str | None:
+def find_device_area(devices: list, areas: list, mac: str, config_entries: list | None = None) -> str | None:
     """Map a device registry MAC connection to its assigned area name."""
     for device in devices:
         if not isinstance(device, dict):
@@ -94,6 +94,18 @@ def find_device_area(devices: list, areas: list, mac: str) -> str | None:
             and connection[0] == "mac" and isinstance(connection[1], str)
             and connection[1].lower() == mac.lower()
             for connection in connections
+        ):
+            continue
+        # HA represents ESPHome and MQTT devices with the same MAC separately.
+        entries = device.get("config_entries", [])
+        esphome_ids = {
+            entry.get("entry_id") for entry in (config_entries or [])
+            if isinstance(entry, dict) and entry.get("domain") == "esphome"
+        }
+        if not isinstance(entries, list) or not any(
+            (isinstance(entry, dict) and entry.get("domain") == "esphome")
+            or (isinstance(entry, str) and entry in esphome_ids) for entry in entries
+            if isinstance(entry, (str, dict))
         ):
             continue
         area_id = device.get("area_id")
@@ -131,4 +143,5 @@ async def lookup_device_area(base: str, token: str, mac: str) -> str | None:
 
         devices = await registry("config/device_registry/list", 1)
         areas = await registry("config/area_registry/list", 2)
-        return find_device_area(devices, areas, mac)
+        entries = await registry("config/config_entries/get", 3)
+        return find_device_area(devices, areas, mac, entries)

@@ -5,9 +5,11 @@ import importlib.util
 import sys
 import types
 import wave
+import threading
 from pathlib import Path
 
 from app.audio_recorder import AudioRecorder
+from app.audio_recording_service import QueuedAudioRecorder
 
 
 def test_recorder_updates_wav_headers_periodically(tmp_path, monkeypatch):
@@ -35,6 +37,27 @@ def test_recorder_updates_wav_headers_periodically(tmp_path, monkeypatch):
     recorder.stop_recording()
     with wave.open(str(output_file), "rb") as wav:
         assert wav.getnframes() == 2
+
+
+def test_wav_writes_run_off_event_loop(tmp_path, monkeypatch):
+    seen = []
+    original = AudioRecorder.record_input_audio
+
+    def capture(self, data):
+        seen.append(threading.get_ident())
+        original(self, data)
+
+    monkeypatch.setattr(AudioRecorder, "record_input_audio", capture)
+
+    async def scenario():
+        loop_thread = threading.get_ident()
+        recorder = QueuedAudioRecorder(str(tmp_path))
+        recorder.start_recording("satellite")
+        recorder.record_input_audio(b"\x01\x02")
+        await asyncio.to_thread(recorder.stop_recording)
+        assert seen and seen[0] != loop_thread
+
+    asyncio.run(scenario())
 
 
 def test_service_does_not_open_wav_until_client_connects(tmp_path, monkeypatch):
