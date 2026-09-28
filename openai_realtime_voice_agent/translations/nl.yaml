@@ -142,6 +142,20 @@ configuration:
       Alleen gebruikt als Zoekmodel op "custom" staat. Elk model dat OpenAI's
       web_search-tool ondersteunt. (Standaard verborgen.)
 
+  # --- 📢 Aankondigingen ---
+  announcement_model:
+    name: "📢 Aankondigingen · Tekstmodel"
+    description: "Leeg laten voor het webzoekmodel. Herformuleert meldingen in de gekozen persoonlijkheid."
+  announcement_tts_model:
+    name: "📢 Aankondigingen · Spraakmodel"
+    description: "OpenAI-spraakmodel voor aankondigingen (standaard gpt-4o-mini-tts)."
+  mqtt_discovery:
+    name: "📢 Aankondigingen · MQTT-detectie"
+    description: "Maak Home Assistant-notificatie-entiteiten als een MQTT-broker beschikbaar is."
+  announcement_chime:
+    name: "📢 Aankondigingen · Geluidssignaal"
+    description: "Speel het geluidssignaal af vóór een aankondiging."
+
   # --- ⏱️ Timers ---
   enable_timers:
     name: "⏱️ Timers · Spraaktimers"

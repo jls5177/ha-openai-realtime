@@ -138,6 +138,20 @@ configuration:
       Only used when Search model is set to "custom". Any model that supports
       OpenAI's web_search tool. (Hidden by default.)
 
+  # --- 📢 Announcements ---
+  announcement_model:
+    name: "📢 Announcements · Composition model"
+    description: "Leave empty to use the web search model. Rephrases notifications in the selected personality."
+  announcement_tts_model:
+    name: "📢 Announcements · Speech model"
+    description: "OpenAI text-to-speech model for announcements (default gpt-4o-mini-tts)."
+  mqtt_discovery:
+    name: "📢 Announcements · MQTT discovery"
+    description: "Create Home Assistant notify entities when an MQTT broker is available."
+  announcement_chime:
+    name: "📢 Announcements · Chime"
+    description: "Play the satellite's chime before an announcement."
+
   # --- ⏱️ Timers ---
   enable_timers:
     name: "⏱️ Timers · Voice timers"

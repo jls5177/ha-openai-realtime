@@ -9,6 +9,8 @@ import dotenv
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
 from pipecat.services.openai.realtime import events as realtime_events
 from app.satellites import SatelliteRegistry, SatelliteRouter, Diagnostics
+from app.announcements import AnnouncementManager
+from app.mqtt_bridge import MQTTBridge
 from app.diagnostics import install_logging
 from app.mcp_service import HomeAssistantMCPService
 from app.disconnect_tool import get_disconnect_tool_definition, create_disconnect_tool_handler
@@ -395,6 +397,8 @@ class Application:
         web_search_model = _resolve_choice(
             "WEB_SEARCH_MODEL", "WEB_SEARCH_MODEL_CUSTOM", "gpt-5.5"
         )
+        announcement_model = os.environ.get("ANNOUNCEMENT_MODEL", "").strip() or web_search_model
+        announcement_tts_model = os.environ.get("ANNOUNCEMENT_TTS_MODEL", "gpt-4o-mini-tts").strip()
 
         # Get recording setting (optional, defaults to false)
         enable_recording = os.environ.get("ENABLE_RECORDING", "false").lower() == "true"
@@ -499,6 +503,14 @@ class Application:
         self.diagnostics_port = int(os.environ.get("DIAGNOSTICS_PORT", "8081"))
         self.registry = SatelliteRegistry()
         await self.registry.load()
+        self.announcement_model = announcement_model
+        self.announcement_tts_model = announcement_tts_model
+        self.announcement_chime = os.environ.get("ANNOUNCEMENT_CHIME", "true").lower() == "true"
+        self.openai_api_key = openai_api_key
+        self.voice = openai_voice
+        self.personality = personality
+        self.announcements = AnnouncementManager(self, self.registry)
+        self.mqtt = MQTTBridge(self, self.registry, self.announcements)
         self.router = SatelliteRouter(self, self.registry, websocket_host, websocket_port,
                                       self.device_token)
         self.diagnostics = Diagnostics(self.registry, self.router, self.device_token,
@@ -733,6 +745,7 @@ class Application:
             start_audio_paused=False
         )
         service.turn_liveness = session.liveness
+        service.announcement_active = False
         session.clock_tool = clock_tool
         logger.info(f"✅ OpenAI Service created: {type(service).__name__}")
         if clock_tool == "get_current_time":
@@ -792,6 +805,7 @@ class Application:
                 pass
         try:
             await self.router.start()
+            await self.mqtt.start()
             await self.diagnostics.start()
             logger.info("Satellite router listening on %s:%d", self.router.host, self.router.port)
             await done.wait()
@@ -803,6 +817,8 @@ class Application:
         logger.info("Cleaning up application...")
         
         await self.router.close()
+        await self.mqtt.close()
+        await self.announcements.close()
         await self.diagnostics.stop()
         logger.info("✅ Application cleanup complete")
 

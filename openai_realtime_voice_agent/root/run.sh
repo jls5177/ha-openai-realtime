@@ -24,6 +24,10 @@ INTERRUPT_RESPONSE=$(bashio::config 'interrupt_response')
 # --- 🌐 Web search ---
 ENABLE_WEB_SEARCH=$(bashio::config 'enable_web_search')
 WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
+ANNOUNCEMENT_MODEL=$(bashio::config 'announcement_model')
+ANNOUNCEMENT_TTS_MODEL=$(bashio::config 'announcement_tts_model')
+MQTT_DISCOVERY=$(bashio::config 'mqtt_discovery')
+ANNOUNCEMENT_CHIME=$(bashio::config 'announcement_chime')
 
 # --- ⏱️ Timers ---
 ENABLE_TIMERS=$(bashio::config 'enable_timers')
@@ -73,6 +77,10 @@ export PHASE_IDLE_DEBOUNCE_MS
 export INTERRUPT_RESPONSE
 export ENABLE_WEB_SEARCH
 export WEB_SEARCH_MODEL
+export ANNOUNCEMENT_MODEL
+export ANNOUNCEMENT_TTS_MODEL
+export MQTT_DISCOVERY
+export ANNOUNCEMENT_CHIME
 export ENABLE_TIMERS
 export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION
@@ -141,6 +149,14 @@ if [ -n "$HA_MCP_URL" ]; then
 fi
 
 # SUPERVISOR_TOKEN is automatically provided by Home Assistant when homeassistant_api: true
+if bashio::services.available "mqtt"; then
+    MQTT_HOST=$(bashio::services mqtt "host")
+    MQTT_PORT=$(bashio::services mqtt "port")
+    MQTT_USERNAME=$(bashio::services mqtt "username")
+    MQTT_PASSWORD=$(bashio::services mqtt "password")
+    MQTT_SSL=$(bashio::services mqtt "ssl")
+    export MQTT_HOST MQTT_PORT MQTT_USERNAME MQTT_PASSWORD MQTT_SSL
+fi
 
 # Start the application
 export PYTHONUNBUFFERED=1

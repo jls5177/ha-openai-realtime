@@ -1,5 +1,6 @@
 """Home Assistant configuration and one-shot satellite area lookup."""
 
+from contextlib import asynccontextmanager
 import json
 import logging
 from urllib.parse import urlsplit, urlunsplit
@@ -120,8 +121,9 @@ def find_device_area(devices: list, areas: list, mac: str, config_entries: list 
     return fallback
 
 
-async def lookup_device_area(base: str, token: str, mac: str) -> str | None:
-    """Authenticate to HA's WebSocket API and read both registries once."""
+@asynccontextmanager
+async def ha_registry(base: str, token: str):
+    """Authenticated HA registry requests over one WebSocket connection."""
     parsed = urlsplit(base)
     scheme = "wss" if parsed.scheme == "https" else "ws"
     url = urlunsplit((scheme, parsed.netloc, parsed.path.rstrip("/") + "/api/websocket", "", ""))
@@ -134,17 +136,55 @@ async def lookup_device_area(base: str, token: str, mac: str) -> str | None:
         if auth.get("type") != "auth_ok":
             raise ValueError(f"HA WebSocket authentication failed: {auth.get('type')}")
 
-        async def registry(command: str, request_id: int) -> list:
-            await socket.send(json.dumps({"id": request_id, "type": command}))
+        async def registry(command: str, request_id: int, **params):
+            await socket.send(json.dumps({"id": request_id, "type": command, **params}))
             response = json.loads(await socket.recv())
             if response.get("id") != request_id or response.get("type") != "result" or not response.get("success"):
                 raise ValueError(f"HA registry request failed: {command}")
             result = response.get("result")
-            if not isinstance(result, list):
+            if (command.endswith("/list") or command == "config_entries/get") and not isinstance(result, list):
                 raise ValueError(f"HA registry returned invalid data: {command}")
             return result
 
+        yield registry
+
+
+async def lookup_device_area(base: str, token: str, mac: str) -> str | None:
+    """Authenticate to HA's WebSocket API and read both registries once."""
+    async with ha_registry(base, token) as registry:
         devices = await registry("config/device_registry/list", 1)
         areas = await registry("config/area_registry/list", 2)
         entries = await registry("config_entries/get", 3)
         return find_device_area(devices, areas, mac, entries)
+
+
+async def device_registry_area_sync(base: str, token: str, mac: str, area: str) -> bool:
+    """Copy the ESPHome room to the separate MQTT announcer device if necessary."""
+    async with ha_registry(base, token) as request:
+        devices = await request("config/device_registry/list", 1)
+        areas = await request("config/area_registry/list", 2)
+        entries = await request("config_entries/get", 3)
+        esphome_ids = {e.get("entry_id") for e in entries if e.get("domain") == "esphome"}
+        source = next((device for device in devices
+                       if any(isinstance(c, (list, tuple)) and len(c) == 2 and
+                              c[0] == "mac" and isinstance(c[1], str) and
+                              c[1].lower() == mac.lower()
+                              for c in device.get("connections", []))
+                       and any((e in esphome_ids if isinstance(e, str) else
+                                isinstance(e, dict) and e.get("domain") == "esphome")
+                               for e in device.get("config_entries", []))), None)
+        if source is None:
+            return False
+        target_area = source.get("area_id")
+        if target_area not in {a.get("area_id") for a in areas if a.get("name") == area}:
+            return False
+        key = "oai_rt_" + mac.replace(":", "").lower()
+        target = next((device for device in devices
+                       if ["mqtt", key] in device.get("identifiers", [])), None)
+        if not target:
+            return False
+        if target.get("area_id") == target_area:
+            return True
+        await request("config/device_registry/update", 4,
+                      device_id=target["id"], area_id=target_area)
+        return True

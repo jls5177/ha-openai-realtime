@@ -13,6 +13,8 @@ host_network: true
 # Gives the add-on SUPERVISOR_TOKEN so it can reach Home Assistant (used as a
 # fallback auth token for the MCP server when longlived_token is left blank).
 homeassistant_api: true
+services:
+  - mqtt:want
 # Recordings (enable_recording) go to /share so users can fetch the WAVs.
 map:
   - type: share
@@ -21,7 +23,7 @@ map:
 # ----------------------------------------------------------------------------
 # Options are ORDERED for the Configuration tab (HA renders them in this order)
 # and pseudo-grouped via name prefixes in translations/{en,nl}.yaml:
-#   🔑 Basics → 🗣️ Model & voice → 💬 Conversation → 🌐 Web search → ⏱️ Timers → 🎚️ Audio
+#   🔑 Basics → 🗣️ Model & voice → 💬 Conversation → 🌐 Web search → 📢 Announcements → ⏱️ Timers → 🎚️ Audio
 #   → 🏠 Home Assistant → ⚙️ Advanced → 🔍 Debug
 # User-facing help lives in translations/, not here — keep comments dev-facing.
 #
@@ -88,6 +90,12 @@ options:
   enable_web_search: true
   web_search_model: "gpt-5.5"
 
+  # --- 📢 Announcements ---
+  announcement_model: ""
+  announcement_tts_model: "gpt-4o-mini-tts"
+  mqtt_discovery: true
+  announcement_chime: true
+
   # --- ⏱️ Timers ---
   enable_timers: true
 
@@ -141,6 +149,11 @@ schema:
   enable_web_search: bool
   web_search_model: "list(gpt-5-nano|gpt-5.4-nano|gpt-5-mini|gpt-5.4-mini|gpt-5|gpt-5.4|gpt-5.5|gpt-6-luna|gpt-6-sol|custom)"
   web_search_model_custom: str?
+  # --- 📢 Announcements ---
+  announcement_model: str?
+  announcement_tts_model: str
+  mqtt_discovery: bool
+  announcement_chime: bool
   # --- ⏱️ Timers ---
   enable_timers: bool
   # --- 🎚️ Audio ---
