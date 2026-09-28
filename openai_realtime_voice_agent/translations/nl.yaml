@@ -204,6 +204,16 @@ configuration:
       De poort waarop de Voice PE verbindt. Moet overeenkomen met de va_url in
       de apparaat-firmware (stable 8080, dev 8081). Alleen wijzigen bij een
       poortconflict — en pas dan ook de firmware-stub aan.
+  device_token:
+    name: "⚙️ Geavanceerd · Apparaattoken"
+    description: >-
+      Optioneel gedeeld geheim voor satellieten. Stel dezelfde waarde in als
+      va_token in elke firmware. Leeg betekent dat apparaten niet geauthenticeerd zijn.
+  diagnostics_port:
+    name: "⚙️ Geavanceerd · Diagnosepoort"
+    description: >-
+      GET /status toont aangesloten satellieten en prestatiegegevens.
+      0 schakelt dit uit. Gebruik een Bearer-token als een apparaattoken is ingesteld.
   session_reuse_timeout_seconds:
     name: "⚙️ Geavanceerd · Gesprek hervatten binnen (seconden)"
     description: >-
@@ -260,3 +270,8 @@ configuration:
     description: >-
       Slaat microfoon- en speakeraudio op in bestanden binnen de add-on,
       alleen voor probleemanalyse. Normaal uit laten.
+  tail_device:
+    name: "🔍 Debug · Tail-apparaat"
+    description: >-
+      Optionele satellietnaam of MAC voor Pipecat Tail-diagnose. Vereist
+      het optionele pakket pipecat-ai-tail; leeg schakelt dit uit.

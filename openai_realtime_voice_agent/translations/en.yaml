@@ -199,6 +199,16 @@ configuration:
       The port the Voice PE connects to. Must match the va_url in the device
       firmware (stable 8080, dev 8081). Only change this on a port clash —
       and update the device firmware stub to match.
+  device_token:
+    name: "⚙️ Advanced · Device token"
+    description: >-
+      Optional shared secret for satellites. Configure the same value in each
+      firmware's va_token substitution. Empty means connections are unauthenticated.
+  diagnostics_port:
+    name: "⚙️ Advanced · Diagnostics port"
+    description: >-
+      GET /status on this port reports connected satellites and performance.
+      Set to 0 to disable. When a device token is set, send it as a Bearer token.
   session_reuse_timeout_seconds:
     name: "⚙️ Advanced · Conversation resume window (seconds)"
     description: >-
@@ -255,3 +265,8 @@ configuration:
     description: >-
       Saves microphone and speaker audio to files inside the add-on, for
       troubleshooting only. Leave off normally.
+  tail_device:
+    name: "🔍 Debug · Tail device"
+    description: >-
+      Optional satellite name or MAC for Pipecat Tail diagnostics. Requires
+      the optional pipecat-ai-tail package; leave empty to disable.

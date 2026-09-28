@@ -40,12 +40,15 @@ HOME_LOCATION=$(bashio::config 'home_location')
 
 # --- ⚙️ Advanced ---
 WEBSOCKET_PORT=$(bashio::config 'websocket_port')
+DEVICE_TOKEN=$(bashio::config 'device_token')
+DIAGNOSTICS_PORT=$(bashio::config 'diagnostics_port')
 SESSION_REUSE_TIMEOUT_SECONDS=$(bashio::config 'session_reuse_timeout_seconds')
 MAX_CONTEXT_MESSAGES=$(bashio::config 'max_context_messages')
 TRANSCRIPTION_MODEL=$(bashio::config 'transcription_model')
 
 # --- 🔍 Debug ---
 ENABLE_RECORDING=$(bashio::config 'enable_recording')
+TAIL_DEVICE=$(bashio::config 'tail_device')
 
 # Validate required configuration
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -77,10 +80,13 @@ export LONGLIVED_TOKEN
 export MCP_TOOL_ALLOWLIST
 export HOME_LOCATION
 export WEBSOCKET_PORT
+export DEVICE_TOKEN
+export DIAGNOSTICS_PORT
 export SESSION_REUSE_TIMEOUT_SECONDS
 export MAX_CONTEXT_MESSAGES
 export TRANSCRIPTION_MODEL
 export ENABLE_RECORDING
+export TAIL_DEVICE
 
 # The *_custom escape hatches (🗣️/🌐/⚙️) are optional WITHOUT defaults —
 # bashio::config prints "null" for unset optionals, and main.py's

@@ -105,6 +105,8 @@ options:
 
   # --- ⚙️ Advanced ---
   websocket_port: 8080
+  device_token: ""
+  diagnostics_port: 8081
   session_reuse_timeout_seconds: 300
   max_context_messages: 12
   transcription_model: "gpt-4o-transcribe"
@@ -113,6 +115,7 @@ options:
 
   # --- 🔍 Debug ---
   enable_recording: false
+  tail_device: ""
 
 schema:
   # --- 🔑 Basics ---
@@ -150,6 +153,8 @@ schema:
   home_location: str
   # --- ⚙️ Advanced ---
   websocket_port: int(1024,65535)
+  device_token: password
+  diagnostics_port: int(0,65535)
   session_reuse_timeout_seconds: int(0,3600)
   max_context_messages: int(0,100)
   transcription_model: "list(gpt-4o-transcribe|gpt-realtime-whisper|gpt-4o-mini-transcribe|whisper-1|custom)"
@@ -162,6 +167,7 @@ schema:
   vad_silence_duration_ms: int?
   # --- 🔍 Debug ---
   enable_recording: bool
+  tail_device: str
 # No `image:` key -> Home Assistant builds the add-on locally from the
 # Dockerfile in this directory (see build.yaml). This makes the fork work
 # without publishing images to a registry. Advanced users who prefer fast

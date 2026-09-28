@@ -170,6 +170,23 @@ Every option has a description on the **Configuration** tab. The ones worth know
   fetch them with the Samba/SSH add-ons or the File editor. Files start when a device connects
   and are updated roughly once per second while recording; leave it off
   unless troubleshooting.
+- **Multiple satellites:** Point up to eight devices at the same
+  `websocket_port`. Each has its own conversation, phase, room instructions
+  and device timers. A reconnect with the same MAC takes over that device's
+  connection and restores its recent conversation. Old firmware without a MAC
+  is accepted only when authentication is off, and is identified by IP.
+- **`device_token`:** Set a shared secret in the add-on and set the same
+  `va_token` substitution in each satellite's firmware. Devices with a missing
+  or incorrect token are rejected before a model session is created. An empty
+  token keeps old unauthenticated behavior; only use this on a trusted network.
+- **`diagnostics_port`:** `GET http://<ha-host>:8081/status` reports connected
+  devices, firmware capabilities, phase, counters, queue depths, and event-loop
+  lag. Set to `0` to disable. If `device_token` is set, include the header
+  `Authorization: Bearer YOUR_TOKEN`; treat the response as private.
+- **`tail_device`:** Optional name or MAC to observe with Pipecat Tail on a
+  single session. It is off by default; install the optional `tail` package
+  extra in a custom add-on image before enabling it. If unavailable, the add-on
+  logs a warning and runs without Tail.
 
 ## 7. Reading the logs
 
@@ -180,9 +197,6 @@ The add-on log shows each turn: `🗣️ user:` (when transcription language is 
 
 ## Known limitations
 
-- **One Satellite per add-on instance.** The current audio/WebSocket transport
-  serves one active device at a time; use a separate add-on instance per
-  Satellite rather than pointing multiple Satellites at the same port.
 - **Room lookup needs device identity.** Newer firmware sends the device
   MAC/name for HA area lookup; older firmware leaves the room unknown.
 - **Voice timers require compatible firmware; voice alarms are not supported.**
