@@ -82,7 +82,12 @@ def resolve_units(config: dict) -> str | None:
 
 
 def find_device_area(devices: list, areas: list, mac: str, config_entries: list | None = None) -> str | None:
-    """Map a device registry MAC connection to its assigned area name."""
+    """Prefer the ESPHome device, then the first matching MAC with an area."""
+    esphome_ids = {
+        entry.get("entry_id") for entry in (config_entries or [])
+        if isinstance(entry, dict) and entry.get("domain") == "esphome"
+    }
+    fallback = None
     for device in devices:
         if not isinstance(device, dict):
             continue
@@ -97,24 +102,22 @@ def find_device_area(devices: list, areas: list, mac: str, config_entries: list 
         ):
             continue
         # HA represents ESPHome and MQTT devices with the same MAC separately.
-        entries = device.get("config_entries", [])
-        esphome_ids = {
-            entry.get("entry_id") for entry in (config_entries or [])
-            if isinstance(entry, dict) and entry.get("domain") == "esphome"
-        }
-        if not isinstance(entries, list) or not any(
-            (isinstance(entry, dict) and entry.get("domain") == "esphome")
-            or (isinstance(entry, str) and entry in esphome_ids) for entry in entries
-            if isinstance(entry, (str, dict))
-        ):
-            continue
         area_id = device.get("area_id")
         for area in areas:
             if isinstance(area, dict) and area.get("area_id") == area_id and area_id:
                 name = area.get("name")
-                return name if isinstance(name, str) and name else None
-        return None
-    return None
+                if isinstance(name, str) and name:
+                    entries = device.get("config_entries", [])
+                    if isinstance(entries, list) and any(
+                        (isinstance(entry, dict) and entry.get("domain") == "esphome")
+                        or (isinstance(entry, str) and entry in esphome_ids)
+                        for entry in entries
+                    ):
+                        return name
+                    if fallback is None:
+                        fallback = name
+                break
+    return fallback
 
 
 async def lookup_device_area(base: str, token: str, mac: str) -> str | None:
@@ -143,5 +146,5 @@ async def lookup_device_area(base: str, token: str, mac: str) -> str | None:
 
         devices = await registry("config/device_registry/list", 1)
         areas = await registry("config/area_registry/list", 2)
-        entries = await registry("config/config_entries/get", 3)
+        entries = await registry("config_entries/get", 3)
         return find_device_area(devices, areas, mac, entries)

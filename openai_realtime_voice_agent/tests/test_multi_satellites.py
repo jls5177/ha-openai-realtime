@@ -16,6 +16,8 @@ from pipecat.processors.aggregators.llm_context import LLMContext
 from app.session_manager import SessionManager
 from app.satellites import SatelliteRegistry, SatelliteRouter, Diagnostics
 from app.main import Application
+from app.main import SafeRealtimeLLMService
+from app.satellite_transport import SatelliteInput
 import app.websocket_handler as handler_module
 import app.main as main_module
 
@@ -340,5 +342,214 @@ def test_overlapping_takeovers_preserve_history(tmp_path, no_area):
             await third.close()
         finally:
             await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_restored_history_sent_once_per_openai_session_without_response(tmp_path, no_area):
+    async def scenario():
+        app = StubApp()
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+
+        async def service_factory(session):
+            service = SafeRealtimeLLMService(api_key="fake")
+            service.events = []
+
+            async def send(event):
+                service.events.append(event.model_dump(exclude_none=True))
+
+            async def connect():
+                await service._handle_evt_session_updated(None)
+
+            service.send_client_event = send
+            service._connect = connect
+            app.session_manager.set_current_service(session.mac, service)
+            return service
+
+        app.create_openai_service = service_factory
+        app.turn_detection_type = "semantic_vad"
+        app.semantic_vad_create_response = True
+        cached = LLMContext(messages=[
+            {"role": "system", "content": "Do not replay this as a message"},
+            {"role": "user", "content": "What time is tea?"},
+            {"role": "assistant", "content": "At five."},
+            {"role": "tool", "content": "ignored", "tool_call_id": "id"},
+        ])
+        app.session_manager.context_caches[MAC1] = SimpleNamespace(
+            context=cached, timestamp=time.time())
+        await router.start()
+        try:
+            client = await connect(router, MAC1, "kitchen")
+            assert json.loads(await asyncio.wait_for(client.recv(), 2))["type"] == "hello"
+            await ready(registry, 1)
+            service = registry.get(MAC1).session.openai_service
+            items = [e for e in service.events if e["type"] == "conversation.item.create"]
+            assert [(e["item"]["role"], e["item"]["content"]) for e in items] == [
+                ("user", [{"type": "input_text", "text": "What time is tea?"}]),
+                ("assistant", [{"type": "output_text", "text": "At five."}]),
+            ]
+            assert all(e["item"]["id"] in service._messages_added_manually for e in items)
+            assert not any(e["type"] == "response.create" for e in service.events)
+            await service._handle_evt_session_updated(None)
+            assert len([e for e in service.events if e["type"] == "conversation.item.create"]) == 2
+            service._api_session_ready = False
+            await service.reset_conversation()
+            assert len([e for e in service.events if e["type"] == "conversation.item.create"]) == 4
+            assert not any(e["type"] == "response.create" for e in service.events)
+            await client.close()
+        finally:
+            await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_failed_registry_write_does_not_reject_later_connections(tmp_path, no_area, caplog):
+    async def scenario():
+        app = StubApp()
+        blocked = tmp_path / "file"
+        blocked.write_text("not a directory")
+        registry = SatelliteRegistry(blocked / "satellites.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+        await router.start()
+        clients = []
+        try:
+            for mac in (MAC1, MAC2, "aa:bb:cc:dd:ee:03"):
+                client = await connect(router, mac, mac)
+                clients.append(client)
+                assert json.loads(await asyncio.wait_for(client.recv(), 2))["type"] == "hello"
+                for _ in range(100):
+                    if router._persist_task and router._persist_task.done():
+                        break
+                    await asyncio.sleep(.01)
+                assert router._persist_task.done()
+            await ready(registry, 3)
+            assert all(s.session.counters["errors"] == 0 for s in registry.connected())
+        finally:
+            for client in clients:
+                await client.close()
+            await router.close()
+
+    asyncio.run(scenario())
+    assert "persist" in caplog.text.lower()
+
+
+def test_silent_same_mac_takeover_is_bounded(tmp_path, no_area):
+    async def scenario():
+        app = StubApp()
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+        await router.start()
+        try:
+            old = await connect(router, MAC1, "old")
+            await ready(registry, 1)
+            await old.recv()
+            old_session = registry.get(MAC1).session
+            old.transport.pause_reading()
+            new = await connect(router, MAC1, "new")
+            assert json.loads(await asyncio.wait_for(new.recv(), 3))["type"] == "hello"
+            assert registry.get(MAC1).session.name == "new"
+            old.transport.resume_reading()
+            await old.wait_closed()
+            assert old_session.counters["errors"] == 0
+            await new.close()
+        finally:
+            await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_audio_before_input_ready_is_dropped_without_disconnect(tmp_path, no_area, monkeypatch):
+    async def scenario():
+        app = StubApp()
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+        original = SatelliteInput.set_transport_ready
+        gate = asyncio.Event()
+        entered = asyncio.Event()
+
+        async def slow_ready(self, frame):
+            entered.set()
+            await gate.wait()
+            await original(self, frame)
+
+        monkeypatch.setattr(SatelliteInput, "set_transport_ready", slow_ready)
+        await router.start()
+        try:
+            client = await connect(router, MAC1, "kitchen")
+            for _ in range(5):
+                await client.send(b"\x00\x01" * 160)
+            await asyncio.wait_for(entered.wait(), 2)
+            await asyncio.sleep(.1)
+            gate.set()
+            assert json.loads(await asyncio.wait_for(client.recv(), 2))["type"] == "hello"
+            await ready(registry, 1)
+            session = registry.get(MAC1).session
+            assert session.counters["audio_before_ready"] == 5
+            await client.send(b"\x00\x01" * 160)
+            for _ in range(100):
+                if session.counters["audio_in_bytes"]:
+                    break
+                await asyncio.sleep(.01)
+            assert session.counters["audio_in_bytes"] == 320
+            await client.close()
+        finally:
+            gate.set()
+            await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_takeover_during_slow_start_cleans_all_pipelines(tmp_path, no_area):
+    async def scenario():
+        app = StubApp()
+        started = asyncio.Event()
+        original = app.create_openai_service
+
+        async def slow_factory(session):
+            started.set()
+            await asyncio.sleep(.5)
+            return await original(session)
+
+        app.create_openai_service = slow_factory
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+        await router.start()
+        try:
+            first = await connect(router, MAC1, "first")
+            await asyncio.wait_for(started.wait(), 2)
+            second = await connect(router, MAC1, "second")
+            await asyncio.wait_for(router.close(), 4)
+            assert not app.session_manager.current_services
+            assert not [task for task in asyncio.all_tasks()
+                        if task.get_name().startswith("pipeline:") and not task.done()]
+            await first.wait_closed()
+            await second.wait_closed()
+        finally:
+            await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_unicode_token_works_for_device_and_diagnostics(tmp_path, no_area):
+    async def scenario():
+        token = "sésame🔑"
+        app = StubApp()
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0, token=token)
+        diag = Diagnostics(registry, router, token=token, port=0, enabled=True)
+        await router.start()
+        await diag.start()
+        try:
+            client = await connect(router, MAC1, "kitchen", token=token)
+            assert json.loads(await asyncio.wait_for(client.recv(), 2))["type"] == "hello"
+            async with aiohttp.ClientSession() as http:
+                async with http.get(f"http://127.0.0.1:{diag.port}/status",
+                                    headers={"Authorization": f"Bearer {token}"}) as res:
+                    assert res.status == 200
+            await client.close()
+        finally:
+            await router.close()
+            await diag.stop()
 
     asyncio.run(scenario())

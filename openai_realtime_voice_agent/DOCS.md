@@ -173,8 +173,14 @@ Every option has a description on the **Configuration** tab. The ones worth know
 - **Multiple satellites:** Point up to eight devices at the same
   `websocket_port`. Each has its own conversation, phase, room instructions
   and device timers. A reconnect with the same MAC takes over that device's
-  connection and restores its recent conversation. Old firmware without a MAC
-  is accepted only when authentication is off, and is identified by IP.
+  connection and restores its recent user/assistant text conversation to the
+  new OpenAI session (not tool messages). A Pipecat-level OpenAI reconnect
+  replays the current text history into its new API session as well, without
+  starting an unsolicited response. Early mic audio before the pipeline is
+  ready is dropped and counted as `audio_before_ready`. A failed metadata
+  write logs an error but does not prevent devices from connecting. Old
+  firmware without a MAC is accepted only when authentication is off, and
+  is identified by IP.
 - **`device_token`:** Set a shared secret in the add-on and set the same
   `va_token` substitution in each satellite's firmware. Devices with a missing
   or incorrect token are rejected before a model session is created. An empty

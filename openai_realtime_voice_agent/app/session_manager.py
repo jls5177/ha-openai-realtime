@@ -308,7 +308,7 @@ class ContextInitializer(FrameProcessor):
                     # The bot will wait for the user to speak first
                     update_frame = LLMMessagesUpdateFrame(messages=messages, run_llm=False)
                     await self.context_aggregator.user().push_frame(update_frame)
-                    logger.info(f"📤 Sent cached context ({len(messages)} messages) to OpenAI for client {self.client_id} (waiting for user)")
+                    logger.info(f"Restored cached context locally ({len(messages)} messages) for client {self.client_id}")
                     self.context_sent = True
             return
         

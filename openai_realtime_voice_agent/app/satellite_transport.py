@@ -17,13 +17,18 @@ class SatelliteInput(BaseInputTransport):
     def __init__(self, transport, params):
         super().__init__(params)
         self.transport = transport
+        self._ready = asyncio.Event()
 
     async def start(self, frame: StartFrame):
         await super().start(frame)
         await self.transport.serializer.setup(frame)
         await self.set_transport_ready(frame)
+        self._ready.set()
 
     async def receive(self, message):
+        if isinstance(message, bytes) and not self._ready.is_set():
+            self.transport.session.increment("audio_before_ready")
+            return
         frame = await self.transport.serializer.deserialize(message)
         if isinstance(frame, InputAudioRawFrame):
             self.transport.session.counters["audio_in_bytes"] += len(frame.audio)

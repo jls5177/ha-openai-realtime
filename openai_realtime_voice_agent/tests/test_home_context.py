@@ -37,6 +37,18 @@ def test_find_device_area(mac, expected):
     assert find_device_area(DEVICES, [], mac, ENTRIES) is None
 
 
+def test_find_device_area_falls_back_to_first_mac_with_an_area():
+    devices = [
+        {"connections": [["mac", "AA:BB:CC:DD:EE:FF"]], "area_id": None,
+         "config_entries": ["mqtt"]},
+        *DEVICES,
+    ]
+    areas = [{"area_id": "other", "name": "Other"}, *AREAS]
+    assert find_device_area(devices, areas, "aa:bb:cc:dd:ee:ff", ENTRIES) == "Kitchen"
+    assert find_device_area(devices, areas, "aa:bb:cc:dd:ee:ff", []) == "Other"
+    assert find_device_area(devices[:1], areas, "aa:bb:cc:dd:ee:ff", ENTRIES) is None
+
+
 def test_home_config_resolution():
     config = {
         "time_zone": "America/Chicago",
@@ -134,7 +146,7 @@ def test_one_shot_area_lookup_auth_and_registry_requests(monkeypatch):
             {"type": "auth", "access_token": "secret"},
             {"id": 1, "type": "config/device_registry/list"},
             {"id": 2, "type": "config/area_registry/list"},
-            {"id": 3, "type": "config/config_entries/get"},
+            {"id": 3, "type": "config_entries/get"},
         ]
 
     asyncio.run(scenario())

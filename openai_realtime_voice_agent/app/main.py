@@ -7,6 +7,7 @@ import signal
 from typing import Optional
 import dotenv
 from pipecat.services.openai.realtime.llm import OpenAIRealtimeLLMService
+from pipecat.services.openai.realtime import events as realtime_events
 from app.satellites import SatelliteRegistry, SatelliteRouter, Diagnostics
 from app.diagnostics import install_logging
 from app.mcp_service import HomeAssistantMCPService
@@ -90,6 +91,48 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
     async def _truncate_current_audio_response(self):  # type: ignore[override]
         return
 
+    def set_history_context(self, context):
+        self._history_context = context
+        self._history_seeded = False
+
+    async def _handle_evt_session_updated(self, evt):  # type: ignore[override]
+        # The server VAD creates responses itself. Pipecat's context setup only
+        # runs inside _create_response(), so seed the new API conversation here.
+        self._run_llm_when_api_session_ready = False
+        await super()._handle_evt_session_updated(evt)
+        if getattr(self, "_history_seeded", False):
+            return
+        self._history_seeded = True
+        context = getattr(self, "_history_context", None)
+        if context is None:
+            return
+        for message in context.get_messages():
+            if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
+                continue
+            content = message.get("content")
+            if isinstance(content, str):
+                text = content
+            elif isinstance(content, list):
+                text = "\n".join(
+                    part["text"] for part in content
+                    if isinstance(part, dict) and part.get("type") in
+                    ("text", "input_text", "output_text") and isinstance(part.get("text"), str)
+                )
+            else:
+                continue
+            if not text:
+                continue
+            role = message["role"]
+            item = realtime_events.ConversationItem(
+                type="message", role=role,
+                content=[realtime_events.ItemContent(
+                    type="input_text" if role == "user" else "output_text", text=text
+                )],
+            )
+            event = realtime_events.ConversationItemCreateEvent(item=item)
+            self._messages_added_manually[item.id] = True
+            await self.send_client_event(event)
+
     async def reset_conversation(self):  # type: ignore[override]
         """Reconnect WITHOUT forcing a response on the reconnected session.
 
@@ -106,13 +149,13 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
         fails, ~1 in 20 reconnects — whenever the user happens to speak in the few
         seconds just after a reconnect).
 
-        Fix: after the normal reconnect, clear `_run_llm_when_api_session_ready` so
-        the reconnected session does NOT self-create a response, and set
-        `_llm_needs_conversation_setup = False` (same as the startup pre-seed) — the
-        server-VAD drives every user-turn response, so we never need to create one
-        ourselves on reconnect. The live context is untouched (it's restored by the
-        SessionManager on the next real turn).
+        Re-seed the live local history into the new API conversation on each
+        pipecat-level reconnect (the previous server conversation is gone).
+        Clear the response flag before reconnecting so session.updated never
+        generates a response in addition to server VAD.
         """
+        self._history_seeded = False
+        self._run_llm_when_api_session_ready = False
         await super().reset_conversation()
         try:
             self._run_llm_when_api_session_ready = False

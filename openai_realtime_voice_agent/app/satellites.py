@@ -12,6 +12,7 @@ import time
 from aiohttp import web
 from pipecat.pipeline.task import PipelineTask
 from websockets.asyncio.server import serve
+from websockets.exceptions import ConnectionClosed
 
 from app.phase_emitter import TurnLiveness
 from app.diagnostics import device_tag
@@ -149,7 +150,8 @@ class DeviceSession:
         self._turn_start = None
         self._closed = False
         self._stopped = asyncio.Event()
-        self._handoff_done = asyncio.Event()
+        self._starting = asyncio.Event()
+        self._starting.set()
 
     def increment(self, key):
         self.counters[key] += 1
@@ -221,6 +223,15 @@ class DeviceSession:
             await self.websocket.close(code=1011, reason="writer timed out")
 
     async def start(self):
+        if self._closed:
+            return
+        self._starting.clear()
+        try:
+            await self._start()
+        finally:
+            self._starting.set()
+
+    async def _start(self):
         self.recording = self.app.make_recorder(self.mac)
         self.handler = WebSocketHandler(
             session_manager=self.app.session_manager,
@@ -234,6 +245,8 @@ class DeviceSession:
         )
         self.serializer.set_timer_message_handler(self.handler.timer_bridge.handle_message)
         self.openai_service = await self.app.create_openai_service(self)
+        if self._closed:
+            return
         if self.app.turn_detection_type == "semantic_vad" and self.app.semantic_vad_create_response:
             from pipecat.processors.aggregators.llm_context import LLMContext
             if getattr(self.openai_service, "_context", None) is None:
@@ -255,7 +268,11 @@ class DeviceSession:
             self.transport, self.openai_service, self.mac
         )
         self.context = self.handler._context_aggregator.user().context
+        if hasattr(self.openai_service, "set_history_context"):
+            self.openai_service.set_history_context(self.context)
         self.handler.start_area_lookup(self.openai_service, {"mac": self.mac})
+        if self._closed:
+            return
         self._run_task = asyncio.create_task(
             self.runner.run(self.pipeline_task), name=f"pipeline:{self.mac}"
         )
@@ -268,6 +285,8 @@ class DeviceSession:
             "wake_open_delay_ms": self.app.wake_open_delay_ms,
             "playback_prebuffer_ms": self.app.playback_prebuffer_ms,
         })
+        if self._closed:
+            return
         await self.serializer.deserialize('{"type":"start"}')
 
     def _pipeline_finished(self, task):
@@ -290,6 +309,7 @@ class DeviceSession:
             return
         self._closed = True
         try:
+            await self._starting.wait()
             if self.handler and self.handler._area_task:
                 self.handler._area_task.cancel()
                 await asyncio.gather(self.handler._area_task, return_exceptions=True)
@@ -309,9 +329,12 @@ class DeviceSession:
             if self.handler:
                 self.handler.timer_bridge.disconnected(self.websocket)
             if self.openai_service:
-                self.app.session_manager.handle_client_disconnect(self.mac, self.openai_service)
-                if self.metadata is not None:
-                    self.metadata.cached_history = self.app.session_manager.get_cached_context(self.mac)
+                if self._run_task:
+                    self.app.session_manager.handle_client_disconnect(self.mac, self.openai_service)
+                    if self.metadata is not None:
+                        self.metadata.cached_history = self.app.session_manager.get_cached_context(self.mac)
+                elif self.app.session_manager.get_current_service(self.mac) is self.openai_service:
+                    del self.app.session_manager.current_services[self.mac]
                 self.app.session_manager.remove_context_aggregator(self.mac)
             if self.recording:
                 await asyncio.to_thread(self.recording.cleanup)
@@ -326,6 +349,9 @@ class DeviceSession:
                     await asyncio.wait_for(self.websocket.close(code=1000, reason="session ended"), 2)
                     if self._close_task:
                         await asyncio.wait_for(self._close_task, 2)
+                except asyncio.TimeoutError:
+                    logger.warning("Satellite socket did not close cleanly", exc_info=True)
+                    self.websocket.transport.abort()
                 except Exception:
                     logger.warning("Satellite socket did not close cleanly", exc_info=True)
             finally:
@@ -354,6 +380,7 @@ class SatelliteRouter:
         self._sockets = set()
         self._server = None
         self._persist_task = None
+        self._takeover_locks = defaultdict(asyncio.Lock)
         self._warned = False
 
     async def start(self):
@@ -377,6 +404,12 @@ class SatelliteRouter:
         if self._persist_task:
             await asyncio.gather(self._persist_task, return_exceptions=True)
 
+    async def _persist(self):
+        try:
+            await self.registry.persist()
+        except Exception:
+            logger.exception("Could not persist satellites registry")
+
     async def _accept(self, websocket):
         if len(self._sockets) >= 8:
             await websocket.close(code=1013, reason="connection limit")
@@ -398,7 +431,7 @@ class SatelliteRouter:
                 return
             if self.token and (
                 mac is None or not isinstance(start.get("token"), str)
-                or not hmac.compare_digest(start["token"], self.token)
+                or not hmac.compare_digest(start["token"].encode("utf-8"), self.token.encode("utf-8"))
             ):
                 await websocket.close(code=1008, reason="device authentication failed")
                 return
@@ -418,32 +451,35 @@ class SatelliteRouter:
                 return
             tag_token = device_tag.set(f"{name or mac}/{mac}")
             session = DeviceSession(self.app, self.registry, websocket, mac, name, caps)
-            old = self.registry.reserve(mac, name, caps, session)
-            if old:
-                await old.stop()
-                await old._handoff_done.wait()
-            if self.registry.get(mac).session is not session:
-                return
-            await session.start()
-            self.registry.activate(session)
+            async with self._takeover_locks[mac]:
+                old = self.registry.reserve(mac, name, caps, session)
+                if old:
+                    await old.stop()
+                if self.registry.get(mac).session is not session:
+                    return
+                await session.start()
+                self.registry.activate(session)
             if MAC_PATTERN.fullmatch(mac):
                 if self._persist_task:
-                    await self._persist_task
-                self._persist_task = asyncio.create_task(self.registry.persist())
+                    try:
+                        await self._persist_task
+                    except Exception:
+                        logger.exception("Could not persist satellites registry")
+                self._persist_task = asyncio.create_task(self._persist())
             async for message in websocket:
                 await session.transport.input().receive(message)
         except asyncio.CancelledError:
             raise
+        except ConnectionClosed:
+            pass
         except Exception:
-            if not getattr(websocket, "closed", False):
-                logger.exception("Satellite connection failed")
+            logger.exception("Satellite connection failed")
             if session:
                 session.increment("errors")
         finally:
             if session:
                 await session.stop()
                 self.registry.release(session)
-                session._handoff_done.set()
             self._sockets.discard(websocket)
             if session:
                 device_tag.reset(tag_token)
@@ -526,7 +562,9 @@ class Diagnostics:
     async def _status(self, request):
         if self.token and (
             not request.headers.get("Authorization", "").startswith("Bearer ")
-            or not hmac.compare_digest(request.headers["Authorization"][7:], self.token)
+            or not hmac.compare_digest(
+                request.headers["Authorization"][7:].encode("utf-8"), self.token.encode("utf-8")
+            )
         ):
             raise web.HTTPUnauthorized()
         return web.json_response({
