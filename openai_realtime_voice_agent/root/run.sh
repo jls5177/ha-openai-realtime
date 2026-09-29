@@ -27,6 +27,7 @@ ANNOUNCEMENT_TTS_MODEL=$(bashio::config 'announcement_tts_model')
 ANNOUNCEMENT_STYLE=$(bashio::config 'announcement_style')
 MQTT_DISCOVERY=$(bashio::config 'mqtt_discovery')
 ANNOUNCEMENT_CHIME=$(bashio::config 'announcement_chime')
+DND_HOLD_MINUTES=$(bashio::config 'dnd_hold_minutes')
 
 # --- ⏱️ Timers ---
 ENABLE_TIMERS=$(bashio::config 'enable_timers')
@@ -73,6 +74,7 @@ export ANNOUNCEMENT_TTS_MODEL
 export ANNOUNCEMENT_STYLE
 export MQTT_DISCOVERY
 export ANNOUNCEMENT_CHIME
+export DND_HOLD_MINUTES
 export ENABLE_TIMERS
 export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION

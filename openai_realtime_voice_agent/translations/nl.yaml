@@ -162,6 +162,9 @@ configuration:
   announcement_chime:
     name: "📢 Aankondigingen · Geluidssignaal"
     description: "Speel het geluidssignaal af vóór een aankondiging."
+  dnd_hold_minutes:
+    name: "📢 Aankondigingen · Niet storen (minuten)"
+    description: "Bewaar aankondigingen voor een satelliet met Niet storen maximaal zo veel minuten (0 schakelt bewaren uit, maximaal 60)."
 
   # --- ⏱️ Timers ---
   enable_timers:

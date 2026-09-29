@@ -286,22 +286,23 @@ def test_faithful_failed_correction_speaks_original_without_recomposing(tmp_path
 
     asyncio.run(scenario())
 
-async def setup(tmp_path, no_area, *, two=False):
+async def setup(tmp_path, no_area, *, two=False, dnd=False, second_dnd=False):
     app = StubApp()
     app.announcement_chime = True
     app.announcement_model = "test"
     app.announcement_tts_model = "gpt-4o-mini-tts"
     app.voice = "marin"
     app.openai_api_key = "test"
+    app.dnd_hold_minutes = 10
     registry = SatelliteRegistry(tmp_path / "satellites.json")
     client = FakeClient()
     manager = AnnouncementManager(app, registry, client=client)
     app.announcements = manager
     router = SatelliteRouter(app, registry, "127.0.0.1", 0)
     await router.start()
-    sockets = [await connect(router, MAC1, "Kitchen")]
+    sockets = [await connect(router, MAC1, "Kitchen", dnd=dnd)]
     if two:
-        sockets.append(await connect(router, MAC2, "Office"))
+        sockets.append(await connect(router, MAC2, "Office", dnd=second_dnd))
     await ready(registry, len(sockets))
     for socket in sockets:
         assert json.loads(await socket.recv())["type"] == "hello"

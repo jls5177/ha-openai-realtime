@@ -2,6 +2,13 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.7-sat.12
+
+- Per-satellite Do Not Disturb holds up to five announcements per device and
+  plays a single age-aware catch-up when the switch is turned off or the device
+  reconnects. Other satellites play immediately; `dnd_hold_minutes` controls
+  retention (0–60 minutes, default 10). Diagnostics report each session's DND state.
+
 ## 0.6.6-sat.11
 
 - Add creative, faithful (default) and verbatim announcement styles. Creative uses

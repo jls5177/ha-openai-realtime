@@ -537,6 +537,7 @@ class Application:
         self.announcement_style = announcement_style
         self.announcement_tts_model = announcement_tts_model
         self.announcement_chime = os.environ.get("ANNOUNCEMENT_CHIME", "true").lower() == "true"
+        self.dnd_hold_minutes = max(0, min(60, int(os.environ.get("DND_HOLD_MINUTES", "10"))))
         self.openai_api_key = openai_api_key
         self.voice = openai_voice
         self.personality = personality

@@ -87,9 +87,18 @@ class Job:
     spoken: str = ""
     error: str = ""
     remaining: set[str] = field(default_factory=set)
+    catch_up: list["Held"] = field(default_factory=list)
 
     def __post_init__(self):
         self.remaining = set(self.targets)
+
+
+@dataclass
+class Held:
+    message: str
+    created: float
+    chime: bool
+    follow_up: bool
 
 
 class AnnouncementManager:
@@ -99,11 +108,14 @@ class AnnouncementManager:
         self._owns_client = client is None
         self.semaphore = asyncio.Semaphore(2)
         self.pending: dict[str, list[Job]] = {}
+        self.held: dict[str, list[Held]] = {}
+        self.releases: dict[str, asyncio.Task] = {}
         self.dispatchers = {}
         self.generators = set()
         self.expirations = set()
         self.coalescing: list[Job] = []
         self.last_notification = float("-inf")
+        self._closing = False
 
     def start_session(self, session):
         queue = asyncio.Queue()
@@ -115,9 +127,14 @@ class AnnouncementManager:
         session.subscribe("announce_cancelled", lambda payload: self._reply(session, "cancelled", payload))
         session.subscribe("announce_text", lambda payload: self._action(session, payload))
         self.dispatchers[session] = asyncio.create_task(self._dispatch(session), name=f"announce:{session.mac}")
-        for job in self.pending[session.mac]:
+        for job in list(self.pending[session.mac]):
             if session.mac in job.remaining:
-                queue.put_nowait(job)
+                if session.dnd:
+                    self._hold_job(session.mac, job)
+                else:
+                    queue.put_nowait(job)
+        if not session.dnd:
+            self._schedule_release(session.mac)
 
     async def stop_session(self, session):
         task = self.dispatchers.pop(session, None)
@@ -128,11 +145,15 @@ class AnnouncementManager:
         session._announcement_reply = None
 
     async def close(self):
+        self._closing = True
+        for task in list(self.releases.values()):
+            task.cancel()
         for task in list(self.generators):
             task.cancel()
         for task in list(self.expirations):
             task.cancel()
-        await asyncio.gather(*self.generators, *self.expirations, return_exceptions=True)
+        await asyncio.gather(*self.releases.values(), *self.generators,
+                             *self.expirations, return_exceptions=True)
         if self._owns_client:
             await self.client.close()
 
@@ -174,22 +195,32 @@ class AnnouncementManager:
             return None
         now = time.monotonic()
         self._prune(now)
-        if any(len(self.pending.get(mac, [])) >= 5 for mac in targets) or (
-            sum(len(j.remaining) for j in self.jobs()) + len(targets) > 10
+        active = {mac for mac in targets
+                  if not (self.registry.get(mac) and self.registry.get(mac).session
+                          and getattr(self.registry.get(mac).session, "dnd", False))}
+        if any(len(self.pending.get(mac, [])) >= 5 for mac in active) or (
+            sum(len(j.remaining) for j in self.jobs()) + len(active) > 10
         ):
             await self.failure("Announcement queue full")
             return None
+        chime = self.app.announcement_chime if chime is None else chime
+        follows = follow_up_for(message, follow_up)
+        for mac in targets - active:
+            self._hold(mac, Held(message, now, chime, follows))
+        if not active:
+            job = Job(message, targets, now, chime, follows)
+            job.remaining.clear()
+            job.ready.set()
+            return job
         job = next((j for j in self.coalescing if j.message == message and
-                    j.chime == (self.app.announcement_chime if chime is None else chime) and
-                    j.follow_up == follow_up_for(message, follow_up) and
+                    j.chime == chime and j.follow_up == follows and
                     now - j.created <= .75 and j.targets.isdisjoint(targets)), None) if coalesce else None
         if job:
             job.targets.update(targets)
-            job.remaining.update(targets)
+            job.remaining.update(active)
         else:
-            job = Job(message, set(targets), now,
-                      self.app.announcement_chime if chime is None else chime,
-                      follow_up_for(message, follow_up))
+            job = Job(message, set(targets), now, chime, follows)
+            job.remaining = set(active)
             self.coalescing.append(job)
             task = asyncio.create_task(self._generate(job), name=f"generate:{job.id}")
             self.generators.add(task)
@@ -197,12 +228,168 @@ class AnnouncementManager:
             expiry = asyncio.create_task(self._expire(job))
             self.expirations.add(expiry)
             expiry.add_done_callback(self.expirations.discard)
-        for mac in targets:
+        for mac in active:
             self.pending.setdefault(mac, []).append(job)
             satellite = self.registry.get(mac)
             if satellite and satellite.session and satellite.session in self.dispatchers:
                 satellite.session._announcement_queue.put_nowait(job)
         return job
+
+    def _hold(self, mac, item):
+        minutes = getattr(self.app, "dnd_hold_minutes", 10)
+        if not minutes or time.monotonic() - item.created >= minutes * 60:
+            logger.info("Satellite %s: dropping DND announcement (holding disabled or expired)", mac)
+            return
+        items = self.held.setdefault(mac, [])
+        items.append(item)
+        items.sort(key=lambda held: held.created)
+        if len(items) > 5:
+            dropped = items.pop(0)
+            logger.info("Satellite %s: DND hold full; dropping oldest (age %.0fs)",
+                        mac, time.monotonic() - dropped.created)
+        logger.info("Satellite %s: holding announcement during DND (%d held)", mac, len(items))
+
+    def _hold_job(self, mac, job):
+        if mac not in job.remaining:
+            return
+        for item in job.catch_up or [Held(job.message, job.created, job.chime, job.follow_up)]:
+            self._hold(mac, item)
+        job.remaining.discard(mac)
+        if job in self.pending.get(mac, []):
+            self.pending[mac].remove(job)
+
+    def dnd_changed(self, session):
+        mac = session.mac
+        if session.dnd:
+            task = self.releases.get(mac)
+            if task and not task.done():
+                task.cancel()
+            for job in list(self.pending.get(mac, [])):
+                if (session._announcement_id != job.id
+                        or (job.catch_up and not session._announcement_pcm_started)):
+                    self._hold_job(mac, job)
+                    if (session._announcement_id == job.id and session._announcement_reply
+                            and not session._announcement_reply.done()):
+                        session._announcement_reply.set_result("dnd")
+        else:
+            self._schedule_release(mac)
+
+    def _schedule_release(self, mac):
+        if self._closing or not self.held.get(mac):
+            return
+        self._prune_held(mac)
+        if (not self.held.get(mac) or len(self.pending.get(mac, [])) >= 5
+                or sum(len(job.remaining) for job in self.jobs()) >= 10
+                or (mac in self.releases and not self.releases[mac].done())):
+            return
+        task = asyncio.create_task(self._release(mac), name=f"dnd-release:{mac}")
+        self.releases[mac] = task
+        task.add_done_callback(lambda completed: self._release_finished(mac, completed))
+
+    def _release_finished(self, mac, task):
+        if self.releases.get(mac) is task:
+            del self.releases[mac]
+            satellite = self.registry.get(mac)
+            if (task.cancelled() and self.held.get(mac) and satellite and satellite.session
+                    and not satellite.session.dnd):
+                self._schedule_release(mac)
+
+    def _release_waiting(self):
+        for mac in list(self.held):
+            satellite = self.registry.get(mac)
+            if satellite and satellite.session and not satellite.session.dnd:
+                self._schedule_release(mac)
+
+    def _prune_held(self, mac):
+        items = self.held.get(mac, [])
+        limit = getattr(self.app, "dnd_hold_minutes", 10) * 60
+        now = time.monotonic()
+        valid = [item for item in items if limit and now - item.created < limit]
+        if len(valid) != len(items):
+            logger.info("Satellite %s: expired %d DND announcements", mac, len(items) - len(valid))
+        if valid:
+            self.held[mac] = valid
+        else:
+            self.held.pop(mac, None)
+
+    async def _release(self, mac):
+        self._prune_held(mac)
+        now = time.monotonic()
+        items = self.held.pop(mac, [])
+        valid = items
+        if not valid:
+            return
+        try:
+            async with self.semaphore:
+                ages = []
+                for item in valid:
+                    minutes = max(0, int((now - item.created) / 60))
+                    ages.append(f"{minutes} {'minute' if minutes == 1 else 'minutes'} ago")
+                entries = "\n".join(f"{age}: {item.message}"
+                                    for age, item in zip(ages, valid))
+                template = ("While you were busy, " + entries.replace("\n", "; ")
+                            if len(valid) > 1 else f"While you were busy, {entries}")
+                if self.app.announcement_style == "verbatim":
+                    spoken = template
+                else:
+                    for attempt in range(2):
+                        try:
+                            remaining = TTL - (time.monotonic() - now)
+                            if remaining <= 0:
+                                raise TimeoutError("DND catch-up expired during generation")
+                            if len(valid) == 1:
+                                body = await asyncio.wait_for(
+                                    self._compose(valid[0].message), remaining
+                                )
+                                spoken = f"While you were busy, {ages[0]}: {body}"
+                            else:
+                                spoken = await asyncio.wait_for(
+                                    self._compose(
+                                        entries, guard_original="\n".join(
+                                            item.message for item in valid
+                                        ), fallback=template, catch_up=True,
+                                    ), remaining,
+                                )
+                            break
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception:
+                            if attempt:
+                                raise
+                            logger.warning("DND catch-up composition retry", exc_info=True)
+                remaining = TTL - (time.monotonic() - now)
+                if remaining <= 0:
+                    raise TimeoutError("DND catch-up expired before speech generation")
+                pcm = await asyncio.wait_for(self._tts(spoken), remaining)
+            satellite = self.registry.get(mac)
+            session = satellite.session if satellite else None
+            if not session or session.dnd or session not in self.dispatchers:
+                for item in valid:
+                    self._hold(mac, item)
+                return
+            if (len(self.pending.get(mac, [])) >= 5
+                    or sum(len(other.remaining) for other in self.jobs()) >= 10):
+                for item in valid:
+                    self._hold(mac, item)
+                return
+            if time.monotonic() - now >= TTL:
+                raise TimeoutError("DND catch-up expired during generation")
+            job = Job(valid[0].message, {mac}, now, True,
+                      valid[0].follow_up if len(valid) == 1 else False)
+            job.catch_up = valid
+            job.spoken, job.pcm = spoken, pcm
+            job.ready.set()
+            self.pending.setdefault(mac, []).append(job)
+            session._announcement_queue.put_nowait(job)
+        except asyncio.CancelledError:
+            for item in valid:
+                self._hold(mac, item)
+            raise
+        except Exception as exc:
+            for item in valid:
+                self._hold(mac, item)
+            valid = []
+            await self.failure(f"{mac}: DND catch-up failed: {exc}")
 
     def jobs(self):
         return {j.id: j for jobs in self.pending.values() for j in jobs}.values()
@@ -220,6 +407,7 @@ class AnnouncementManager:
         await asyncio.sleep(max(0, TTL - (time.monotonic() - job.created)))
         pending_before = set(job.remaining)
         self._prune(time.monotonic())
+        self._release_waiting()
         if job.remaining and not job.ready.is_set():
             job.error = "Announcement expired during generation"
             job.ready.set()
@@ -229,6 +417,8 @@ class AnnouncementManager:
     async def _generate(self, job):
         try:
             await asyncio.sleep(.75)
+            if not job.remaining:
+                return
             async with self.semaphore:
                 if time.monotonic() - job.created >= TTL:
                     raise TimeoutError("Announcement expired before generation")
@@ -260,7 +450,7 @@ class AnnouncementManager:
             if job in self.coalescing:
                 self.coalescing.remove(job)
 
-    async def _compose(self, message):
+    async def _compose(self, message, *, guard_original=None, fallback=None, catch_up=False):
         style = self.app.announcement_style
         logger.debug("Announcement original: %s", message)
         if style == "verbatim":
@@ -282,6 +472,10 @@ class AnnouncementManager:
             self.app.instructions, PERSONAS[self.app.personality], VOICE_RULES, rules,
             f"Home location: {self.app.home_location}. Time zone: {self.app.time_zone or 'unknown'}.",
         ))
+        if catch_up:
+            prompt += ("\n\nCATCH-UP: Make ONE short spoken summary in character. Cover every "
+                       "item and its relative age. Preserve each item's point. "
+                       "Do not invent events or combine distinct facts.")
         for attempt in range(2 if style == "faithful" else 1):
             try:
                 response = await self.client.responses.create(
@@ -302,7 +496,8 @@ class AnnouncementManager:
             if style == "creative":
                 logger.info("announcement text (%s): %s", style, composed)
                 return composed
-            safe, reason = fact_guard(message, composed)
+            safe, reason = fact_guard(guard_original if guard_original is not None else message,
+                                      composed)
             if safe:
                 logger.info("Announcement faithful composition %s passed fact guard",
                             "retry" if attempt else "initial")
@@ -313,8 +508,8 @@ class AnnouncementManager:
             else:
                 logger.warning("Announcement faithful fact guard failed (%s); retrying with correction", reason)
                 prompt += f"\n\nCORRECTION: You dropped: {reason}. Include every missing item."
-        logger.info("announcement text (%s): %s", style, message)
-        return message
+        logger.info("announcement text (%s): %s", style, fallback or message)
+        return fallback or message
 
     async def _tts(self, text):
         async def fetch(voice):
@@ -359,9 +554,14 @@ class AnnouncementManager:
         if (session._announcement_generation != session.generation or satellite is None
                 or satellite.generation != session.generation or satellite.session is not session):
             return
+        if kind == "busy" and payload.get("reason") == "dnd" and not session.dnd:
+            session.dnd = True
+            logger.info("Satellite %s: DND on (device busy response)", session.mac)
+            self.dnd_changed(session)
         future = session._announcement_reply
         if future is not None and not future.done():
-            future.set_result(kind)
+            future.set_result("dnd" if kind == "busy" and payload.get("reason") == "dnd"
+                              else kind)
 
     async def _action(self, session, payload):
         if not isinstance(payload, dict) or not isinstance(payload.get("chime", True), bool):
@@ -392,14 +592,32 @@ class AnnouncementManager:
                 try:
                     if "announce" not in session.caps:
                         raise ValueError("Satellite lacks announce capability")
-                    await asyncio.wait_for(job.ready.wait(), max(.001, TTL - (time.monotonic() - job.created)))
+                    if session.dnd:
+                        self._hold_job(session.mac, job)
+                        continue
+                    while not job.ready.is_set() and session.mac in job.remaining:
+                        remaining = TTL - (time.monotonic() - job.created)
+                        if remaining <= 0:
+                            raise TimeoutError("Announcement expired during generation")
+                        try:
+                            await asyncio.wait_for(job.ready.wait(), min(.1, remaining))
+                        except asyncio.TimeoutError:
+                            pass
+                    if session.mac not in job.remaining:
+                        continue
                     if job.error:
                         raise RuntimeError(job.error)
-                    while not session.is_idle() and time.monotonic() - job.created < TTL:
+                    while not session.is_idle() and not session.dnd and time.monotonic() - job.created < TTL:
                         await asyncio.sleep(.1)
+                    if session.mac not in job.remaining:
+                        continue
+                    if session.dnd:
+                        self._hold_job(session.mac, job)
+                        continue
                     if time.monotonic() - job.created >= TTL:
                         raise TimeoutError("Announcement expired")
-                    await self._play(session, job)
+                    if await self._play(session, job) == "dnd":
+                        self._hold_job(session.mac, job)
                 except asyncio.CancelledError:
                     if session._announcement_pcm_started:
                         await self._note_interrupted(session, job)
@@ -416,6 +634,7 @@ class AnnouncementManager:
                         job.remaining.discard(session.mac)
                         if job in self.pending.get(session.mac, []):
                             self.pending[session.mac].remove(job)
+                        self._release_waiting()
                     session._announcement_pcm_started = False
                     session._announcement_noted = False
         except asyncio.CancelledError:
@@ -435,6 +654,8 @@ class AnnouncementManager:
         loop = asyncio.get_running_loop()
         try:
             while time.monotonic() - job.created < TTL:
+                if session.dnd:
+                    return "dnd"
                 session._announcement_reply = loop.create_future()
                 await session.send_json({"type": "announce", "id": job.id,
                                          "chime": job.chime, "follow_up": job.follow_up})
@@ -445,10 +666,17 @@ class AnnouncementManager:
                 if reply == "busy":
                     await asyncio.sleep(min(3, max(0, TTL - (time.monotonic() - job.created))))
                     continue
+                if reply == "dnd":
+                    if job.catch_up:
+                        await self._cancel(session, job)
+                    return "dnd"
                 if reply == "cancelled":
                     logger.info("Announcement %s cancelled during reservation", job.id)
                     return
                 if reply == "ready":
+                    if session.dnd and job.catch_up:
+                        await self._cancel(session, job)
+                        return "dnd"
                     break
             else:
                 raise TimeoutError("Announcement expired while device busy")
@@ -461,6 +689,9 @@ class AnnouncementManager:
             start = loop.time()
             sent_bytes = 0
             for offset in range(0, len(job.pcm), CHUNK * 8):
+                if session.dnd and job.catch_up and not session._announcement_pcm_started:
+                    await self._cancel(session, job)
+                    return "dnd"
                 if session._closed:
                     raise ConnectionError("Satellite disconnected during playback")
                 if session._announcement_reply.done():

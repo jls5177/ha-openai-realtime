@@ -36,3 +36,10 @@ def test_announcement_style_is_configured_and_exported():
     assert CONFIG["schema"]["announcement_style"] == "list(creative|faithful|verbatim)"
     assert "ANNOUNCEMENT_STYLE=$(bashio::config 'announcement_style')" in RUN_SH
     assert re.search(r"^export ANNOUNCEMENT_STYLE$", RUN_SH, re.M)
+
+
+def test_dnd_hold_is_configured_and_exported():
+    assert CONFIG["options"]["dnd_hold_minutes"] == 10
+    assert CONFIG["schema"]["dnd_hold_minutes"] == "int(0,60)"
+    assert "DND_HOLD_MINUTES=$(bashio::config 'dnd_hold_minutes')" in RUN_SH
+    assert re.search(r"^export DND_HOLD_MINUTES$", RUN_SH, re.M)

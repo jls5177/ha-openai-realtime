@@ -113,12 +113,14 @@ async def ready(registry, count):
     raise AssertionError("sessions did not start")
 
 
-async def connect(router, mac, name, token=None):
+async def connect(router, mac, name, token=None, dnd=None):
     client = await websockets.connect(f"ws://127.0.0.1:{router.port}/device",
                                       max_queue=16)
     payload = {"type": "start", "mac": mac, "name": name, "caps": ["announce"]}
     if token is not None:
         payload["token"] = token
+    if dnd is not None:
+        payload["dnd"] = dnd
     await client.send(json.dumps(payload))
     return client
 

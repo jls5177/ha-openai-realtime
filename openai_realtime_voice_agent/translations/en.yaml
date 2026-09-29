@@ -158,6 +158,9 @@ configuration:
   announcement_chime:
     name: "📢 Announcements · Chime"
     description: "Play the satellite's chime before an announcement."
+  dnd_hold_minutes:
+    name: "📢 Announcements · DND hold (minutes)"
+    description: "Hold announcements for a satellite in Do Not Disturb for up to this many minutes (0 disables holding, maximum 60)."
 
   # --- ⏱️ Timers ---
   enable_timers:

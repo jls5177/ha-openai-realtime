@@ -117,13 +117,14 @@ class SatelliteRegistry:
 class DeviceSession:
     """One OpenAI pipeline and all disposable state for exactly one socket."""
 
-    def __init__(self, app, registry, websocket, mac, name="", caps=None):
+    def __init__(self, app, registry, websocket, mac, name="", caps=None, dnd=False):
         self.app = app
         self.registry = registry
         self.websocket = websocket
         self.mac = mac
         self.name = name
         self.caps = caps or []
+        self.dnd = dnd
         self.metadata = None
         self.generation = 0
         self.serializer = RawAudioSerializer()
@@ -184,6 +185,16 @@ class DeviceSession:
     async def on_device_message(self, message_type, payload):
         if message_type == "ping":
             await self.send_json({"type": "pong"})
+        if message_type == "dnd":
+            value = payload.get("value") if isinstance(payload, dict) else None
+            if not isinstance(value, bool):
+                logger.warning("Satellite %s: invalid DND value %r", self.mac, value)
+                return
+            if self.dnd != value:
+                self.dnd = value
+                logger.info("Satellite %s: DND %s", self.mac, "on" if value else "off")
+                if getattr(self.app, "announcements", None):
+                    self.app.announcements.dnd_changed(self)
         for callback in self._message_handlers[message_type]:
             await callback(payload)
 
@@ -383,7 +394,8 @@ class DeviceSession:
         return {
             "mac": self.mac, "name": self.metadata.name if self.metadata else self.name,
             "area": self.metadata.area if self.metadata else None,
-            "caps": self.caps, "phase": self.phase_emitter._current if self.phase_emitter else None,
+            "caps": self.caps, "dnd": self.dnd,
+            "phase": self.phase_emitter._current if self.phase_emitter else None,
             "uptime_s": round(time.monotonic() - self.created_at, 1),
             "writer_queue_depth": self._writes.qsize(), "counters": counters,
         }
@@ -466,8 +478,13 @@ class SatelliteRouter:
             ):
                 await websocket.close(code=1008, reason="invalid capabilities")
                 return
+            dnd = start.get("dnd", False)
+            if not isinstance(dnd, bool):
+                logger.warning("Satellite %s: invalid start DND value %r; using false", mac, dnd)
+                dnd = False
             tag_token = device_tag.set(f"{name or mac}/{mac}")
-            session = DeviceSession(self.app, self.registry, websocket, mac, name, caps)
+            session = DeviceSession(self.app, self.registry, websocket, mac, name, caps, dnd)
+            logger.info("Satellite %s: DND %s on connect", mac, "on" if dnd else "off")
             async with self._takeover_locks[mac]:
                 old = self.registry.reserve(mac, name, caps, session)
                 if old:

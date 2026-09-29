@@ -175,6 +175,40 @@ boundary); pending announcements expire after five minutes. Each satellite
 can have five pending announcements, with ten targets pending globally.
 Failures are logged and reported as rate-limited Home Assistant notifications.
 
+### Do Not Disturb
+
+Compatible Satellite firmware exposes a per-device **Do Not Disturb** switch.
+Turn it on to silence new announcements on that satellite (the firmware also
+suppresses wake-word activation and timer ringing audio). Other satellites in
+an “All satellites” announcement play immediately. Existing playback is allowed
+to finish. For example, automate the office switch from a meeting sensor
+(replace the entity IDs with your own):
+
+```yaml
+triggers: [{trigger: state, entity_id: binary_sensor.justin_in_meeting}]
+actions:
+  - action: "switch.turn_{{ 'on' if trigger.to_state.state == 'on' else 'off' }}"
+    target: {entity_id: switch.fph_sat1_504ff8_do_not_disturb}
+```
+
+The add-on holds up to five original messages **per satellite** while DND is
+on, dropping the oldest when full. When DND ends, unexpired messages become one
+spoken catch-up (with relative ages) in the selected announcement style:
+creative or faithful uses the configured persona; faithful checks the original
+facts and falls back to an aged verbatim list; verbatim needs no AI composition.
+One original retains its follow-up setting; a multi-message summary never
+opens follow-up. The `dnd_hold_minutes` option defaults to **10** (range 0–60);
+set it to **0** to discard announcements to DND satellites instead.
+
+Held originals expire from their ingress time, independently of the normal
+five-minute pending TTL. They occupy only the five-item DND hold list, **not**
+the five-per-satellite pending queue or ten-target global pending cap.
+Catch-up composition produces one TTS clip for the recovering satellite; when
+it is queued, it takes one ordinary pending slot. Its new five-minute delivery
+TTL starts when release begins. Holds and catch-ups are in memory and do not
+survive an add-on restart; reconnecting a satellite without restarting the
+add-on releases its unexpired holds when its switch is off.
+
 ## 7. Options reference & tuning
 
 Every option has a description on the **Configuration** tab. The ones worth knowing:
