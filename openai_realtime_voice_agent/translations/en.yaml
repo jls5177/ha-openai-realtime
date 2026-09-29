@@ -29,9 +29,10 @@ configuration:
     name: "🔑 Basics · Spoken language (e.g. nl, en, de)"
     description: >-
       Two-letter code of the language you speak to it. Setting it keeps the
-      assistant from drifting into other languages, AND writes what you said
-      into the add-on log (the 🗣️ lines — handy to check what it heard).
-      Leave empty for auto-detect (no user transcript in the log).
+      assistant from drifting into other languages. Leave empty to
+      auto-detect. When conversation memory is enabled (default), the
+      transcription model also records your words in the add-on log and
+      restores recent user turns after a reconnect even without a language.
 
   # --- 🗣️ Model & voice ---
   openai_model:
@@ -239,9 +240,9 @@ configuration:
   transcription_model:
     name: "⚙️ Advanced · Transcript model"
     description: >-
-      Only used when a spoken language is set (Basics). This model writes
-      your speech into the log as text — it does NOT affect how the assistant
-      understands you (it hears your actual voice). gpt-4o-transcribe
+      Used when conversation memory is enabled or a spoken language is set.
+      This model writes your speech into the log as text — it does NOT affect
+      how the assistant understands you (it hears your actual voice). gpt-4o-transcribe
       (default) is the most accurate. For an unlisted model pick "custom" and
       enable "Show unused optional configuration options" at the bottom.
   transcription_model_custom:

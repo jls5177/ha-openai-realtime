@@ -21,7 +21,7 @@ from app.personas import PERSONAS
 from app.prompt_builder import build_prompt
 from app.time_tool import get_time_tool_definition, create_time_tool_handler
 from app.audio_recording_service import AudioRecordingService
-from app.session_manager import SessionManager
+from app.session_manager import SessionManager, bounded_history_messages
 
 # Configure logging
 logging.basicConfig(
@@ -93,9 +93,27 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
     async def _truncate_current_audio_response(self):  # type: ignore[override]
         return
 
-    def set_history_context(self, context):
+    def set_history_context(self, context, max_messages=0):
         self._history_context = context
+        self._history_max_messages = max(0, int(max_messages))
         self._history_seeded = False
+        self._completed_tool_calls.update(
+            message["tool_call_id"] for message in context.get_messages()
+            if isinstance(message, dict) and message.get("tool_call_id")
+            and message.get("content") != "IN_PROGRESS"
+        )
+
+    def _replay_messages(self):
+        context = self._history_context
+        messages = context.get_messages()
+        limit = self._history_max_messages
+        bounded = bounded_history_messages(messages, limit)
+        if bounded is not messages:
+            context.set_messages(bounded)
+            messages = context.get_messages()
+        replay = [message for message in messages
+                  if isinstance(message, dict) and message.get("role") in ("user", "assistant")]
+        return replay[-limit:] if limit else replay
 
     async def _handle_evt_session_updated(self, evt):  # type: ignore[override]
         # The server VAD creates responses itself. Pipecat's context setup only
@@ -108,9 +126,10 @@ class SafeRealtimeLLMService(OpenAIRealtimeLLMService):
         context = getattr(self, "_history_context", None)
         if context is None:
             return
-        for message in context.get_messages():
-            if not isinstance(message, dict) or message.get("role") not in ("user", "assistant"):
-                continue
+        # These items are seeded explicitly; pipecat's setup would otherwise
+        # serialize the same history into a second conversation item.
+        self._llm_needs_conversation_setup = False
+        for message in self._replay_messages():
             content = message.get("content")
             if isinstance(content, str):
                 text = content
@@ -494,6 +513,7 @@ class Application:
             logger.warning(f"⚠️ Failed to initialize Home Assistant MCP Client: {e}")
         
         self.enable_recording = enable_recording
+        self.max_context_messages = max_context_messages
         self.follow_up_ms = follow_up_ms
         self.follow_up_open_delay_ms = follow_up_open_delay_ms
         self.wake_open_delay_ms = wake_open_delay_ms
@@ -681,15 +701,14 @@ class Application:
                 silence_duration_ms=self.vad_silence_duration_ms,
             )
 
-        # Optionally pin the input-transcription language to stop the model
-        # drifting between languages (e.g. "nl"). Empty -> auto-detect.
-        # transcription_model picks the STT used for the transcript text.
+        # Restore needs user transcripts even when no language is pinned;
+        # otherwise only assistant turns survive a reconnect.
         transcription = (
             InputAudioTranscription(
                 model=self.transcription_model,
-                language=self.transcription_language,
+                language=self.transcription_language or None,
             )
-            if self.transcription_language
+            if self.transcription_language or self.max_context_messages > 0
             else None
         )
 
@@ -726,13 +745,13 @@ class Application:
                 f"🎚️ Turn detection: semantic_vad (eagerness={self.vad_eagerness}, "
                 f"create_response={self.semantic_vad_create_response}, "
                 f"interrupt_response={self.interrupt_response})"
-                + (f", transcription={self.transcription_model} (lang={self.transcription_language})" if self.transcription_language else " (transcription off)")
+                + (f", transcription={self.transcription_model} (lang={self.transcription_language or 'auto'})" if transcription else " (transcription off)")
             )
         else:
             logger.info(
                 f"🎚️ Turn detection: server_vad (threshold={self.vad_threshold}, "
                 f"silence_duration_ms={self.vad_silence_duration_ms})"
-                + (f", transcription={self.transcription_model} (lang={self.transcription_language})" if self.transcription_language else " (transcription off)")
+                + (f", transcription={self.transcription_model} (lang={self.transcription_language or 'auto'})" if transcription else " (transcription off)")
             )
 
         logger.info(f"🔧 Creating session with {len(all_tools)} tools: {[tool.get('name', 'unknown') for tool in all_tools]}")

@@ -28,9 +28,10 @@ configuration:
     name: "🔑 Basis · Spreektaal (bijv. nl, en, de)"
     description: >-
       Tweeletterige code van de taal die je tegen het apparaat spreekt. Dit
-      voorkomt dat de assistent naar een andere taal afdwaalt, ÉN schrijft wat
-      jij zei in het add-on-log (de 🗣️-regels — handig om te zien wat hij
-      verstond). Leeg = automatisch detecteren (geen transcript in het log).
+      voorkomt dat de assistent naar een andere taal afdwaalt. Leeg betekent
+      automatisch detecteren. Met gespreksgeheugen aan (standaard) verschijnen
+      je woorden ook zonder taalkeuze in het add-on-log en blijven recente
+      gebruikersbeurten bewaard na opnieuw verbinden.
 
   # --- 🗣️ Model & stem ---
   openai_model:
@@ -244,8 +245,8 @@ configuration:
   transcription_model:
     name: "⚙️ Geavanceerd · Transcriptmodel"
     description: >-
-      Alleen gebruikt als bij Basis een spreektaal is ingesteld. Dit model
-      schrijft jouw spraak als tekst in het log — het beïnvloedt NIET hoe de
+      Gebruikt als gespreksgeheugen aan staat of een spreektaal is ingesteld.
+      Dit model schrijft jouw spraak als tekst in het log — het beïnvloedt NIET hoe de
       assistent je verstaat (die hoort je echte stem). gpt-4o-transcribe
       (standaard) is het nauwkeurigst. Voor een ander model: kies "custom" en
       zet onderaan "Toon ongebruikte optionele configuratie-opties" aan.

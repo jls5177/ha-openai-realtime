@@ -78,7 +78,7 @@ option has plain-language inline help.
 |---|---|---|
 | `openai_model` | `gpt-realtime-2` | speech-to-speech model; `gpt-realtime-2.1` is newer, `gpt-realtime-2.1-mini` is the low-cost option with tool use |
 | `openai_voice` | `marin` | `marin`/`cedar` are the newest voices |
-| `transcription_language` | *(blank)* | set your ISO code (e.g. `nl`): locks the language + logs the user transcript |
+| `transcription_language` | *(blank)* | optionally pin a language; with conversation memory on, transcripts are auto-detected and logged even when blank |
 | `instructions` | *(English default)* | custom language/house rules; change the LANGUAGE line for your language; Voice Rules always apply |
 | `personality` | `monday` | `standard` (neutral), `monday` (dry wit), `cat` (playful), or `monday_cat` (both) |
 | `home_location` | *(blank)* | optional town/region for local answers; HA supplies the time zone and units |
@@ -172,9 +172,11 @@ Every option has a description on the **Configuration** tab. The ones worth know
 
 - **Model / voice / transcription model** are dropdowns with a **`custom`** entry +
   a `*_custom` text field if you want a value not in the list.
-- **`transcription_language`** turns the side-channel transcript on. With it set you
-  get `🗣️ user: …` lines in the add-on log (handy for debugging); it does **not**
-  change what the model understands — the main model hears your audio natively.
+- **Transcription / conversation memory:** with `max_context_messages` above zero
+  (default 12), input transcripts are auto-detected, logged as `🗣️ user: …`, and
+  restored alongside assistant turns after reconnects. Set `transcription_language`
+  to pin a language; transcription does **not** change what the model understands
+  — the main model hears your audio natively.
 - **`personality` / `instructions`**: select a persona independently of the
   custom instructions. The always-present Voice Rules govern spoken brevity
   and tool use even if you edit `instructions`. Existing installations may
@@ -216,7 +218,8 @@ Every option has a description on the **Configuration** tab. The ones worth know
   and device timers. A reconnect with the same MAC takes over that device's
   connection and restores its recent user/assistant text conversation to the
   new OpenAI session (not tool messages). A Pipecat-level OpenAI reconnect
-  replays the current text history into its new API session as well, without
+  replays the last `max_context_messages` user/assistant turns into its new API
+  session as well, without
   starting an unsolicited response. Early mic audio before the pipeline is
   ready is dropped and counted as `audio_before_ready`. A failed metadata
   write logs an error but does not prevent devices from connecting. Old
@@ -237,7 +240,7 @@ Every option has a description on the **Configuration** tab. The ones worth know
 
 ## 8. Reading the logs
 
-The add-on log shows each turn: `🗣️ user:` (when transcription language is set),
+The add-on log shows each turn: `🗣️ user:` (when memory or transcription is enabled),
 `🤖 assistant:` (the reply text), `📞 phase ->` (device state), tool calls, and
 `🔌 …reconnecting` / `✅ reconnected` on a connection recovery. View it on the add-on
 **Log** tab.

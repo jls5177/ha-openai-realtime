@@ -278,7 +278,9 @@ class DeviceSession:
         )
         self.context = self.handler._context_aggregator.user().context
         if hasattr(self.openai_service, "set_history_context"):
-            self.openai_service.set_history_context(self.context)
+            self.openai_service.set_history_context(
+                self.context, self.app.session_manager.max_restored_messages
+            )
         self.handler.start_area_lookup(self.openai_service, {"mac": self.mac})
         if self._closed:
             return

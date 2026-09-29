@@ -75,6 +75,25 @@ class StubApp:
         return service
 
 
+def replay_service_factory(app):
+    async def create(session):
+        service = SafeRealtimeLLMService(api_key="fake")
+        service.events = []
+
+        async def send(event):
+            service.events.append(event.model_dump(exclude_none=True))
+
+        async def connect():
+            await service._handle_evt_session_updated(None)
+
+        service.send_client_event = send
+        service._connect = connect
+        app.session_manager.set_current_service(session.mac, service)
+        return service
+
+    return create
+
+
 async def ready(registry, count):
     for _ in range(150):
         if len(registry.connected()) == count and all(
@@ -250,11 +269,14 @@ async def on_announce(payload, received):
     received.append(payload["id"])
 
 
-def test_production_factory_creates_distinct_services(tmp_path, monkeypatch, no_area):
+@pytest.mark.parametrize("history_limit", [0, 12])
+def test_production_factory_creates_distinct_services(tmp_path, monkeypatch, no_area, history_limit):
     async def scenario():
         monkeypatch.setenv("OPENAI_API_KEY", "fake")
         monkeypatch.setenv("SATELLITES_PATH", str(tmp_path / "devices.json"))
         monkeypatch.setenv("DIAGNOSTICS_PORT", "0")
+        monkeypatch.setenv("MAX_CONTEXT_MESSAGES", str(history_limit))
+        monkeypatch.setenv("TRANSCRIPTION_LANGUAGE", "")
         monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
         monkeypatch.delenv("LONGLIVED_TOKEN", raising=False)
 
@@ -278,6 +300,10 @@ def test_production_factory_creates_distinct_services(tmp_path, monkeypatch, no_
             assert one.openai_service is not two.openai_service
             assert one.handler.timer_bridge is not two.handler.timer_bridge
             assert "set_timer" in one.openai_service.functions
+            transcription = one.openai_service._session_properties.audio.input.transcription
+            assert (transcription is not None) is (history_limit > 0)
+            if transcription:
+                assert transcription.language is None
             assert app.session_manager.get_current_service(MAC1) is one.openai_service
             await first.close()
             await second.close()
@@ -352,22 +378,7 @@ def test_restored_history_sent_once_per_openai_session_without_response(tmp_path
         registry = SatelliteRegistry(tmp_path / "devices.json")
         router = SatelliteRouter(app, registry, "127.0.0.1", 0)
 
-        async def service_factory(session):
-            service = SafeRealtimeLLMService(api_key="fake")
-            service.events = []
-
-            async def send(event):
-                service.events.append(event.model_dump(exclude_none=True))
-
-            async def connect():
-                await service._handle_evt_session_updated(None)
-
-            service.send_client_event = send
-            service._connect = connect
-            app.session_manager.set_current_service(session.mac, service)
-            return service
-
-        app.create_openai_service = service_factory
+        app.create_openai_service = replay_service_factory(app)
         app.turn_detection_type = "semantic_vad"
         app.semantic_vad_create_response = True
         cached = LLMContext(messages=[
@@ -390,6 +401,12 @@ def test_restored_history_sent_once_per_openai_session_without_response(tmp_path
                 ("assistant", [{"type": "output_text", "text": "At five."}]),
             ]
             assert all(e["item"]["id"] in service._messages_added_manually for e in items)
+            assert "id" in service._completed_tool_calls
+            assert not any(e["type"] == "response.create" for e in service.events)
+            await service._handle_context(registry.get(MAC1).session.context)
+            assert not any(e["type"] == "conversation.item.create" and
+                           e.get("item", {}).get("type") == "function_call_output"
+                           for e in service.events)
             assert not any(e["type"] == "response.create" for e in service.events)
             await service._handle_evt_session_updated(None)
             assert len([e for e in service.events if e["type"] == "conversation.item.create"]) == 2
@@ -402,6 +419,124 @@ def test_restored_history_sent_once_per_openai_session_without_response(tmp_path
             await router.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("turn_detection", "create_response"),
+    [("server_vad", False), ("semantic_vad", False)],
+)
+def test_replay_without_preseed_does_not_send_history_twice(
+    tmp_path, no_area, turn_detection, create_response,
+):
+    async def scenario():
+        app = StubApp()
+        app.create_openai_service = replay_service_factory(app)
+        app.turn_detection_type = turn_detection
+        app.semantic_vad_create_response = create_response
+        app.session_manager.context_caches[MAC1] = SimpleNamespace(
+            context=LLMContext(messages=[
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "first question"},
+                {"role": "assistant", "content": "first answer"},
+                {"role": "tool", "tool_call_id": "old-call", "content": "old result"},
+            ]), timestamp=time.time(),
+        )
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+        await router.start()
+        try:
+            client = await connect(router, MAC1, "kitchen")
+            await ready(registry, 1)
+            session = registry.get(MAC1).session
+            service = session.openai_service
+            assert service._context is None
+            assert service._llm_needs_conversation_setup is False
+            assert len([e for e in service.events if e["type"] == "conversation.item.create"]) == 2
+            session.context.add_message({"role": "user", "content": "next question"})
+            await service._handle_context(session.context)
+            items = [e for e in service.events if e["type"] == "conversation.item.create"]
+            assert len(items) == 2
+            assert [e["type"] for e in service.events].count("response.create") == 1
+            assert not any(e["item"].get("type") == "function_call_output" for e in items)
+            await client.close()
+        finally:
+            await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_reconnect_caps_replay_and_live_context(tmp_path, no_area):
+    async def scenario():
+        app = StubApp()
+        app.session_manager.max_restored_messages = 2
+        app.create_openai_service = replay_service_factory(app)
+        app.turn_detection_type = "semantic_vad"
+        app.semantic_vad_create_response = True
+        app.session_manager.context_caches[MAC1] = SimpleNamespace(
+            context=LLMContext(messages=[
+                {"role": "system", "content": "system prompt"},
+                {"role": "user", "content": "old question"},
+                {"role": "assistant", "content": "old answer"},
+            ]), timestamp=time.time(),
+        )
+        registry = SatelliteRegistry(tmp_path / "devices.json")
+        router = SatelliteRouter(app, registry, "127.0.0.1", 0)
+        await router.start()
+        try:
+            client = await connect(router, MAC1, "kitchen")
+            await ready(registry, 1)
+            session = registry.get(MAC1).session
+            service = session.openai_service
+            for n in range(4):
+                session.context.add_message({"role": "user", "content": f"question {n}"})
+                session.context.add_message({"role": "assistant", "content": f"answer {n}"})
+                session.context.add_message({
+                    "role": "tool", "tool_call_id": f"call-{n}", "content": "old tool result",
+                })
+            assert len(session.context.get_messages()) > 10
+            for n in range(2):
+                service.events.clear()
+                service._api_session_ready = False
+                await service.reset_conversation()
+                replay = [e["item"] for e in service.events
+                          if e["type"] == "conversation.item.create"]
+                assert [(item["role"], item["content"][0]["text"]) for item in replay] == [
+                    ("user", f"question {3+n}"), ("assistant", f"answer {3+n}"),
+                ]
+                assert [m["role"] for m in session.context.get_messages()] == [
+                    "system", "user", "assistant", "tool",
+                ]
+                assert not any(e["type"] == "response.create" for e in service.events)
+                assert service._llm_needs_conversation_setup is False
+                session.context.add_message({"role": "user", "content": f"question {4+n}"})
+                session.context.add_message({"role": "assistant", "content": f"answer {4+n}"})
+                session.context.add_message({
+                    "role": "tool", "tool_call_id": f"call-{4+n}", "content": "old tool result",
+                })
+            await client.close()
+        finally:
+            await router.close()
+
+    asyncio.run(scenario())
+
+
+def test_cached_history_limit_counts_user_and_assistant_not_tools():
+    manager = SessionManager(max_restored_messages=2)
+    manager.context_caches[MAC1] = SimpleNamespace(
+        context=LLMContext(messages=[
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "old question"},
+            {"role": "tool", "tool_call_id": "old-tool", "content": "old result"},
+            {"role": "assistant", "content": "old answer"},
+            {"role": "user", "content": "latest question"},
+            {"role": "tool", "tool_call_id": "latest-tool", "content": "latest result"},
+            {"role": "assistant", "content": "latest answer"},
+        ]), timestamp=time.time(),
+    )
+    restored = manager.create_context_for_new_session(MAC1).get_messages()
+    assert [m["content"] for m in restored] == [
+        "system prompt", "latest question", "latest result", "latest answer",
+    ]
 
 
 def test_failed_registry_write_does_not_reject_later_connections(tmp_path, no_area, caplog):
