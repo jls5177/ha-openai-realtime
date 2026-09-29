@@ -257,6 +257,35 @@ def test_faithful_retries_all_missing_items(tmp_path, caplog, retry, spoken):
     asyncio.run(scenario())
 
 
+
+@pytest.mark.parametrize("failure", ["", RuntimeError("api down")])
+def test_faithful_failed_correction_speaks_original_without_recomposing(tmp_path, failure):
+    async def scenario():
+        app = StubApp()
+        app.announcement_model = "test"
+        app.voice = "marin"
+        client = FakeClient()
+        calls = []
+        original = "Dinner is ready at 7:30."
+
+        async def compose(**kwargs):
+            calls.append(kwargs)
+            if len(calls) == 1:
+                return SimpleNamespace(output_text="Let's eat!")
+            if isinstance(failure, Exception):
+                raise failure
+            return SimpleNamespace(output_text=failure)
+
+        client.responses.create = compose
+        manager = AnnouncementManager(app, SatelliteRegistry(tmp_path / "satellites.json"), client)
+        try:
+            assert await manager._compose(original) == original
+            assert len(calls) == 2
+        finally:
+            await manager.close()
+
+    asyncio.run(scenario())
+
 async def setup(tmp_path, no_area, *, two=False):
     app = StubApp()
     app.announcement_chime = True

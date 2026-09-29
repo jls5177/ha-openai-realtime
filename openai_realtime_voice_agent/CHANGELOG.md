@@ -6,6 +6,9 @@ All notable changes to this add-on. Newest first.
 
 - Add creative, faithful (default) and verbatim announcement styles. Creative uses
   custom instructions for playful announcements; verbatim skips rewriting.
+  Faithful and creative both see your custom instructions (household names).
+  If the faithful correction call fails, the original is spoken rather than
+  composing again.
   Faithful retries once with a targeted correction when its fact check fails,
   then falls back to the original message. Follow-up still uses the original text.
 

@@ -283,12 +283,22 @@ class AnnouncementManager:
             f"Home location: {self.app.home_location}. Time zone: {self.app.time_zone or 'unknown'}.",
         ))
         for attempt in range(2 if style == "faithful" else 1):
-            response = await self.client.responses.create(
-                model=self.app.announcement_model, instructions=prompt, input=message,
-            )
-            composed = (response.output_text or "").strip()
-            if not composed:
-                raise ValueError("Empty composed announcement")
+            try:
+                response = await self.client.responses.create(
+                    model=self.app.announcement_model, instructions=prompt, input=message,
+                )
+                composed = (response.output_text or "").strip()
+                if not composed:
+                    raise ValueError("Empty composed announcement")
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                # Only the first call may fail up to _generate's retry; a failed
+                # correction falls back to the original instead of re-billing.
+                if not attempt:
+                    raise
+                logger.warning("Announcement faithful retry failed; using original", exc_info=True)
+                break
             if style == "creative":
                 logger.info("announcement text (%s): %s", style, composed)
                 return composed
