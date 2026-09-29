@@ -2,6 +2,33 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.4-sat.9
+
+- **Multiple satellites from one add-on.**
+  - Each device gets its own session, with its own OpenAI connection, room, timers, conversation
+    history and recording, keyed by the MAC in its `start` message.
+  - A device that reconnects replaces its old session and gets its recent history back.
+  - Up to eight devices at a time.
+- **Optional `device_token`:** devices must send a matching `va_token`, and a 5 s handshake deadline
+  applies.
+- **Diagnostics.**
+  - Every log line is tagged with its device.
+  - Event-loop lag monitor.
+  - Per-device counters, with a summary every 60 s.
+  - `GET /status` on `diagnostics_port` (8081).
+  - Optional `tail_device` for pipecat-ai/tail.
+- **Announcements.** Home Assistant can have the assistant announce a message in its personality.
+  - The message is rephrased once, with a fact check that falls back to the original wording. Speech
+    is generated once with OpenAI TTS, so every target plays the same audio.
+  - Satellites play a chime first. The mic opens afterwards only if the message asks a question.
+  - Announcements queue while a device is busy, for up to 5 minutes.
+  - Available through MQTT notify entities (one per satellite plus "All satellites", with rooms synced
+    from the ESPHome device) and the Satellite1 `announce` ESPHome action. Requires Satellite1 realtime
+    firmware with the `announce` capability.
+- **Room lookup** now uses Home Assistant's `config_entries/get` command and prefers the ESPHome device.
+- **Conversation history** replayed after a reconnect is capped and sent only once. User turns are
+  now always transcribed, so they're kept too.
+
 ## 0.6.3-sat.8
 
 - Add `gpt-realtime-2.1` and `gpt-realtime-2.1-mini` to the model list. The

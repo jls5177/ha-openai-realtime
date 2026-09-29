@@ -264,7 +264,13 @@ The add-on log shows each turn: `🗣️ user:` (when memory or transcription is
 after one. It has no effect before the assistant has started answering (there's
 nothing to stop yet).
 
-## Firmware (Home Assistant Voice PE only)
+## Firmware
+
+**FutureProofHomes Satellite1:** use the realtime variant of the Satellite1-ESPHome firmware
+(`config/satellite1.realtime.yaml`). Multiple satellites, `va_token` and announcements need that
+firmware from the `feature/realtime-va` branch or later.
+
+**Home Assistant Voice PE:**
 
 This add-on expects the custom **Voice PE firmware** that turns the device into a
 thin client (it streams mic audio here and plays the reply). That firmware:
