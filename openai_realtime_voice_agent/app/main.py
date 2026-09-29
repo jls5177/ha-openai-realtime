@@ -420,6 +420,10 @@ class Application:
         announcement_model = (
             web_search_model if announcement_choice.lower() in ("", "null") else announcement_choice
         )
+        announcement_style = os.environ.get("ANNOUNCEMENT_STYLE", "faithful").strip().lower()
+        if announcement_style not in ("creative", "faithful", "verbatim"):
+            logger.warning("Unknown announcement style %r; using faithful", announcement_style)
+            announcement_style = "faithful"
         tts_choice = os.environ.get("ANNOUNCEMENT_TTS_MODEL", "").strip()
         announcement_tts_model = (
             "gpt-4o-mini-tts" if tts_choice.lower() in ("", "null") else tts_choice
@@ -530,6 +534,7 @@ class Application:
         self.registry = SatelliteRegistry()
         await self.registry.load()
         self.announcement_model = announcement_model
+        self.announcement_style = announcement_style
         self.announcement_tts_model = announcement_tts_model
         self.announcement_chime = os.environ.get("ANNOUNCEMENT_CHIME", "true").lower() == "true"
         self.openai_api_key = openai_api_key

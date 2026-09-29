@@ -29,3 +29,10 @@ def test_optional_options_are_not_read_unconditionally():
 
 def test_every_option_has_a_schema_entry():
     assert set(CONFIG["options"]) <= set(CONFIG["schema"])
+
+
+def test_announcement_style_is_configured_and_exported():
+    assert CONFIG["options"]["announcement_style"] == "faithful"
+    assert CONFIG["schema"]["announcement_style"] == "list(creative|faithful|verbatim)"
+    assert "ANNOUNCEMENT_STYLE=$(bashio::config 'announcement_style')" in RUN_SH
+    assert re.search(r"^export ANNOUNCEMENT_STYLE$", RUN_SH, re.M)

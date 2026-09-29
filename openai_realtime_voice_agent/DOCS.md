@@ -127,8 +127,16 @@ When several timers share a name, the assistant asks which one to cancel.
 
 ## 6. Announcements
 
-Announcements use the selected personality to rephrase your message without changing facts,
-then speak it through OpenAI text-to-speech. **The voice is AI-generated** and may sound
+Set **Announcement style** in the add-on configuration:
+
+- **Creative**: gives the AI room for jokes, dramatic flair and household in-jokes from
+  your custom instructions, while keeping the essential message. Recommended for fun households.
+- **Faithful** (default): rephrases in character while protecting names and numbers. If the
+  rewrite drops a protected item, it retries once with a correction, then speaks the original
+  if the retry still fails.
+- **Verbatim**: skips rewriting and speaks the message exactly as supplied.
+
+All three styles use OpenAI text-to-speech. **The voice is AI-generated** and may sound
 slightly different from the realtime conversation voice. A compatible satellite advertises
 the `announce` capability; older firmware cannot play announcements.
 
@@ -148,8 +156,9 @@ data:
 To announce on several devices use `entity_id: [notify.kitchen_announce,
 notify.office_announce]`; to target a room, choose the corresponding announcer
 device's area in Home Assistant; to target every connected satellite use
-`entity_id: notify.all_satellites_announce`. An MQTT message containing `?`
-opens the device's follow-up listening window; other messages do not.
+`entity_id: notify.all_satellites_announce`. An original message containing `?`
+opens the device's follow-up listening window in every style, regardless of the spoken
+rewrite; other messages do not.
 
 For the ESPHome device action (substitute the device's actual action name):
 

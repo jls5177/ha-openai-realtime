@@ -65,6 +65,7 @@ class StubApp:
         self.tail_device = ""
         self.instructions = "Test instructions"
         self.personality = "monday"
+        self.announcement_style = "faithful"
         self.home_location = ""
         self.time_zone = None
         self.units = None
@@ -380,6 +381,24 @@ def test_optional_announcement_model_export_is_guarded():
     export = "ANNOUNCEMENT_MODEL=$(bashio::config 'announcement_model')"
     assert guard in run
     assert run.index(guard) < run.index(export) < run.index("\nfi\n", run.index(guard))
+
+
+def test_invalid_announcement_style_falls_back_to_faithful(tmp_path, monkeypatch, caplog):
+    async def scenario():
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("ANNOUNCEMENT_STYLE", "unexpected")
+        monkeypatch.setenv("SATELLITES_PATH", str(tmp_path / "devices.json"))
+        monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+        monkeypatch.delenv("LONGLIVED_TOKEN", raising=False)
+        app = Application()
+        await app.initialize()
+        try:
+            assert app.announcement_style == "faithful"
+            assert "Unknown announcement style 'unexpected'; using faithful" in caplog.text
+        finally:
+            await app.announcements.close()
+
+    asyncio.run(scenario())
 
 
 def test_overlapping_takeovers_preserve_history(tmp_path, no_area):

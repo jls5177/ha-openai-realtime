@@ -31,18 +31,19 @@ COMMON = {
 
 def fact_guard(original: str, composed: str) -> tuple[bool, str]:
     """Check protected numbers and proper names without relying on the model."""
+    missing = []
     output_numbers = Counter(NUMBER.findall(composed))
     for number, count in Counter(NUMBER.findall(original)).items():
         if output_numbers[number] < count:
-            return False, f"missing number {number}"
+            missing.append(f"number {number}" + (f" ({count} times)" if count > 1 else ""))
     words = [m.group().casefold() for m in WORD.finditer(original)
              if m.group()[0].isupper()
              and m.group().casefold() not in COMMON]
-    output = [m.group().casefold() for m in WORD.finditer(composed)]
+    output = Counter(m.group().casefold() for m in WORD.finditer(composed))
     for word, count in Counter(words).items():
-        if output.count(word) < count:
-            return False, f"missing name {word}"
-    return True, ""
+        if output[word] < count:
+            missing.append(f"name {word}" + (f" ({count} times)" if count > 1 else ""))
+    return not missing, ", ".join(missing)
 
 
 def truncate_message(message: str) -> str:
@@ -260,25 +261,50 @@ class AnnouncementManager:
                 self.coalescing.remove(job)
 
     async def _compose(self, message):
-        prompt = "\n\n".join((
-            PERSONAS[self.app.personality], VOICE_RULES,
-            "ANNOUNCE RULES: Rephrase in character in 1–2 short spoken sentences. "
+        style = self.app.announcement_style
+        logger.debug("Announcement original: %s", message)
+        if style == "verbatim":
+            logger.info("announcement text (%s): %s", style, message)
+            return message
+        rules = (
+            "CREATIVE ANNOUNCE RULES: Rewrite the announcement however you like, in character: "
+            "jokes, roasts, dramatic flair, and household in-jokes from the instructions are all welcome. "
+            "At most 3 short spoken sentences. The listener must still come away knowing what the message "
+            "is about, including any time, number or name that actually matters. "
+            "Ask a question only if the original asks one. No URLs or markdown. No tools."
+            if style == "creative" else
+            "FAITHFUL ANNOUNCE RULES: Rephrase in character in 1–2 short spoken sentences. "
             "Keep every fact exactly (names, numbers, times, places, units). "
             "Add no new facts. Ask a question only if the original asks one. "
-            "No URLs or markdown. No tools.",
+            "No URLs or markdown. No tools."
+        )
+        prompt = "\n\n".join((
+            self.app.instructions, PERSONAS[self.app.personality], VOICE_RULES, rules,
             f"Home location: {self.app.home_location}. Time zone: {self.app.time_zone or 'unknown'}.",
         ))
-        response = await self.client.responses.create(
-            model=self.app.announcement_model, instructions=prompt, input=message,
-        )
-        composed = (response.output_text or "").strip()
-        if not composed:
-            raise ValueError("Empty composed announcement")
-        safe, reason = fact_guard(message, composed)
-        if not safe:
-            logger.warning("Announcement fact guard: %s; using original", reason)
-            return message
-        return composed
+        for attempt in range(2 if style == "faithful" else 1):
+            response = await self.client.responses.create(
+                model=self.app.announcement_model, instructions=prompt, input=message,
+            )
+            composed = (response.output_text or "").strip()
+            if not composed:
+                raise ValueError("Empty composed announcement")
+            if style == "creative":
+                logger.info("announcement text (%s): %s", style, composed)
+                return composed
+            safe, reason = fact_guard(message, composed)
+            if safe:
+                logger.info("Announcement faithful composition %s passed fact guard",
+                            "retry" if attempt else "initial")
+                logger.info("announcement text (%s): %s", style, composed)
+                return composed
+            if attempt:
+                logger.warning("Announcement faithful retry failed fact guard (%s); using original", reason)
+            else:
+                logger.warning("Announcement faithful fact guard failed (%s); retrying with correction", reason)
+                prompt += f"\n\nCORRECTION: You dropped: {reason}. Include every missing item."
+        logger.info("announcement text (%s): %s", style, message)
+        return message
 
     async def _tts(self, text):
         async def fetch(voice):

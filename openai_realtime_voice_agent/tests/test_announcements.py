@@ -1,6 +1,7 @@
 """Announcements through real Pipecat tasks and fake external services."""
 import asyncio
 import json
+import logging
 import time
 from types import SimpleNamespace
 
@@ -30,6 +31,9 @@ def test_fact_guard_and_follow_up(caplog):
     assert not fact_guard("Bring 2 and 2 boxes.", "Bring 2 boxes.")[0]
     assert not fact_guard("Temperature -5°C.", "Temperature 5°C.")[0]
     assert not fact_guard("Call Doctor Jones.", "Call Doctor.")[0]
+    safe, missing = fact_guard("Dinner is ready at 7:30. Who's hungry?", "Come eat.")
+    assert not safe
+    assert all(item in missing for item in ("7:30", "dinner", "who's"))
     assert follow_up_for("Coming?")
     assert not follow_up_for("Dinner is ready.")
     assert follow_up_for("Dinner is ready.", "always")
@@ -162,6 +166,97 @@ class FakeClient:
         return Stream()
 
 
+def test_verbatim_skips_composition(tmp_path, caplog):
+    async def scenario():
+        app = StubApp()
+        app.announcement_style = "verbatim"
+        client = FakeClient()
+        manager = AnnouncementManager(app, SatelliteRegistry(tmp_path / "satellites.json"), client)
+        try:
+            with caplog.at_level(logging.DEBUG, logger=announcement_module.__name__):
+                assert await manager._compose("Dinner is ready.") == "Dinner is ready."
+            assert client.compositions == 0
+            assert "announcement text (verbatim): Dinner is ready." in caplog.text
+            assert "Announcement original: Dinner is ready." in caplog.text
+        finally:
+            await manager.close()
+
+    asyncio.run(scenario())
+
+
+def test_creative_uses_custom_instructions_without_guard(tmp_path, monkeypatch, caplog):
+    async def scenario():
+        app = StubApp()
+        app.announcement_style = "creative"
+        app.announcement_model = "test"
+        app.instructions = "The family calls the cat Captain Fluff."
+        client = FakeClient("The feast awaits, Captain Fluff.")
+        prompts = []
+
+        async def compose(**kwargs):
+            prompts.append(kwargs)
+            return SimpleNamespace(output_text=client.text)
+
+        client.responses.create = compose
+        monkeypatch.setattr(announcement_module, "fact_guard",
+                            lambda *args: pytest.fail("creative must not run fact guard"))
+        manager = AnnouncementManager(app, SatelliteRegistry(tmp_path / "satellites.json"), client)
+        try:
+            with caplog.at_level(logging.INFO, logger=announcement_module.__name__):
+                assert await manager._compose("Dinner is ready at 7:30.") == client.text
+            assert len(prompts) == 1
+            assert "Captain Fluff" in prompts[0]["instructions"]
+            assert "VOICE RULES" in prompts[0]["instructions"]
+            assert "CREATIVE ANNOUNCE RULES" in prompts[0]["instructions"]
+            assert "announcement text (creative): The feast awaits" in caplog.text
+        finally:
+            await manager.close()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(("retry", "spoken"), [
+    ("Dinner at 7:30. Who's hungry?", "Dinner at 7:30. Who's hungry?"),
+    ("Come eat.", "Dinner is ready at 7:30. Who's hungry?"),
+])
+def test_faithful_retries_all_missing_items(tmp_path, caplog, retry, spoken):
+    async def scenario():
+        app = StubApp()
+        app.announcement_model = "test"
+        client = FakeClient()
+        prompts = []
+        original = "Dinner is ready at 7:30. Who's hungry?"
+        responses = iter(("Let's eat!", retry))
+
+        async def compose(**kwargs):
+            prompts.append(kwargs)
+            return SimpleNamespace(output_text=next(responses))
+
+        client.responses.create = compose
+        manager = AnnouncementManager(app, SatelliteRegistry(tmp_path / "satellites.json"), client)
+        try:
+            with caplog.at_level(logging.INFO, logger=announcement_module.__name__):
+                assert await manager._compose(original) == spoken
+            assert len(prompts) == 2
+            assert "Test instructions" in prompts[0]["instructions"]
+            assert "VOICE RULES" in prompts[0]["instructions"]
+            assert "FAITHFUL ANNOUNCE RULES" in prompts[0]["instructions"]
+            correction = prompts[1]["instructions"]
+            assert "You dropped:" in correction
+            assert all(item in correction for item in ("7:30", "dinner", "who's"))
+            assert prompts[0]["input"] == prompts[1]["input"] == original
+            assert f"announcement text (faithful): {spoken}" in caplog.text
+            assert "retrying with correction" in caplog.text
+            if retry == spoken:
+                assert "retry passed fact guard" in caplog.text
+            else:
+                assert "retry failed fact guard" in caplog.text
+        finally:
+            await manager.close()
+
+    asyncio.run(scenario())
+
+
 async def setup(tmp_path, no_area, *, two=False):
     app = StubApp()
     app.announcement_chime = True
@@ -182,6 +277,32 @@ async def setup(tmp_path, no_area, *, two=False):
     for socket in sockets:
         assert json.loads(await socket.recv())["type"] == "hello"
     return app, registry, manager, client, router, sockets
+
+
+@pytest.mark.parametrize(("style", "original", "composed", "follow_up"), [
+    ("creative", "Dinner is ready?", "Gather round.", True),
+    ("faithful", "Dinner is ready?", "Dinner is served.", True),
+    ("verbatim", "Dinner is ready?", "Unused.", True),
+    ("creative", "Dinner is ready.", "Coming?", False),
+    ("faithful", "Dinner is ready.", "Dinner is ready?", False),
+    ("verbatim", "Dinner is ready.", "Unused.", False),
+])
+def test_follow_up_uses_original_in_every_style(tmp_path, no_area, style, original, composed, follow_up):
+    async def scenario():
+        app, _, manager, client, router, sockets = await setup(tmp_path, no_area)
+        app.announcement_style = style
+        client.text = composed
+        try:
+            job = await manager.submit(original, [MAC1])
+            await asyncio.wait_for(job.ready.wait(), 3)
+            assert not job.error
+            assert job.follow_up is follow_up
+            assert job.spoken == (original if style == "verbatim" else composed)
+            assert client.compositions == (0 if style == "verbatim" else 1)
+        finally:
+            await close(manager, router, sockets)
+
+    asyncio.run(scenario())
 
 
 async def close(manager, router, sockets):

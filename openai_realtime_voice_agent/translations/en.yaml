@@ -142,7 +142,13 @@ configuration:
   # --- 📢 Announcements ---
   announcement_model:
     name: "📢 Announcements · Composition model"
-    description: "Leave empty to use the web search model. Rephrases notifications in the selected personality."
+    description: "Leave empty to use the web search model. Used for creative and faithful announcements; verbatim skips composition."
+  announcement_style:
+    name: "📢 Announcements · Style"
+    description: >-
+      Creative: playful rewrites in your personality using custom instructions (recommended for fun households).
+      Faithful (default): rephrase while preserving names and numbers; retry once if a fact is dropped,
+      then use the original. Verbatim: speak your message exactly, without AI rewriting.
   announcement_tts_model:
     name: "📢 Announcements · Speech model"
     description: "OpenAI text-to-speech model for announcements (default gpt-4o-mini-tts)."

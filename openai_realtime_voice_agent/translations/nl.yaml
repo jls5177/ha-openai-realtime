@@ -146,7 +146,13 @@ configuration:
   # --- 📢 Aankondigingen ---
   announcement_model:
     name: "📢 Aankondigingen · Tekstmodel"
-    description: "Leeg laten voor het webzoekmodel. Herformuleert meldingen in de gekozen persoonlijkheid."
+    description: "Leeg laten voor het webzoekmodel. Gebruikt voor creatieve en getrouwe aankondigingen; letterlijk slaat herformuleren over."
+  announcement_style:
+    name: "📢 Aankondigingen · Stijl"
+    description: >-
+      Creative: speelse herformuleringen in de gekozen persoonlijkheid met eigen instructies (aanbevolen voor gezellige huishoudens).
+      Faithful (standaard): herformuleert met behoud van namen en getallen; bij ontbrekende feiten één nieuwe poging,
+      daarna de oorspronkelijke tekst. Verbatim: spreekt het bericht letterlijk uit, zonder AI-herformulering.
   announcement_tts_model:
     name: "📢 Aankondigingen · Spraakmodel"
     description: "OpenAI-spraakmodel voor aankondigingen (standaard gpt-4o-mini-tts)."

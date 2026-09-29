@@ -24,6 +24,7 @@ INTERRUPT_RESPONSE=$(bashio::config 'interrupt_response')
 ENABLE_WEB_SEARCH=$(bashio::config 'enable_web_search')
 WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
 ANNOUNCEMENT_TTS_MODEL=$(bashio::config 'announcement_tts_model')
+ANNOUNCEMENT_STYLE=$(bashio::config 'announcement_style')
 MQTT_DISCOVERY=$(bashio::config 'mqtt_discovery')
 ANNOUNCEMENT_CHIME=$(bashio::config 'announcement_chime')
 
@@ -69,6 +70,7 @@ export INTERRUPT_RESPONSE
 export ENABLE_WEB_SEARCH
 export WEB_SEARCH_MODEL
 export ANNOUNCEMENT_TTS_MODEL
+export ANNOUNCEMENT_STYLE
 export MQTT_DISCOVERY
 export ANNOUNCEMENT_CHIME
 export ENABLE_TIMERS

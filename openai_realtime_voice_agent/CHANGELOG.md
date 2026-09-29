@@ -2,6 +2,13 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.6-sat.11
+
+- Add creative, faithful (default) and verbatim announcement styles. Creative uses
+  custom instructions for playful announcements; verbatim skips rewriting.
+  Faithful retries once with a targeted correction when its fact check fails,
+  then falls back to the original message. Follow-up still uses the original text.
+
 ## 0.6.5-sat.10
 
 - Fix "Failed to save: Missing option 'tail_device'" when you change any
