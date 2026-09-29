@@ -46,6 +46,13 @@ def fact_guard(original: str, composed: str) -> tuple[bool, str]:
     return not missing, ", ".join(missing)
 
 
+def held_age(seconds: float) -> str:
+    minutes = int(max(0.0, seconds) / 60)
+    if minutes == 0:
+        return "less than a minute ago"
+    return f"{minutes} {'minute' if minutes == 1 else 'minutes'} ago"
+
+
 def truncate_message(message: str) -> str:
     if len(message) <= 500:
         return message
@@ -321,10 +328,7 @@ class AnnouncementManager:
             return
         try:
             async with self.semaphore:
-                ages = []
-                for item in valid:
-                    minutes = max(0, int((now - item.created) / 60))
-                    ages.append(f"{minutes} {'minute' if minutes == 1 else 'minutes'} ago")
+                ages = [held_age(now - item.created) for item in valid]
                 entries = "\n".join(f"{age}: {item.message}"
                                     for age, item in zip(ages, valid))
                 template = ("While you were busy, " + entries.replace("\n", "; ")
@@ -374,7 +378,7 @@ class AnnouncementManager:
                 return
             if time.monotonic() - now >= TTL:
                 raise TimeoutError("DND catch-up expired during generation")
-            job = Job(valid[0].message, {mac}, now, True,
+            job = Job(valid[0].message, {mac}, now, any(item.chime for item in valid),
                       valid[0].follow_up if len(valid) == 1 else False)
             job.catch_up = valid
             job.spoken, job.pcm = spoken, pcm

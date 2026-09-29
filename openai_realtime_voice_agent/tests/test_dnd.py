@@ -160,6 +160,31 @@ def test_single_catch_up_lead_in_and_history(tmp_path, no_area, style):
     asyncio.run(scenario())
 
 
+
+def test_held_age_wording():
+    from app.announcements import held_age
+    assert held_age(0) == held_age(59) == "less than a minute ago"
+    assert held_age(60) == "1 minute ago"
+    assert held_age(8 * 60 + 5) == "8 minutes ago"
+
+
+def test_catch_up_respects_chime_off(tmp_path, no_area):
+    async def scenario():
+        app, _, manager, _, router, sockets = await setup(tmp_path, no_area, dnd=True)
+        app.announcement_style = "verbatim"
+        app.announcement_chime = False
+        try:
+            await manager.submit("Dinner is ready.", [MAC1])
+            await sockets[0].send('{"type":"dnd","value":false}')
+            request = await next_type(sockets[0], "announce")
+            assert request["chime"] is False
+            assert manager.pending[MAC1][0].spoken.startswith(
+                "While you were busy, less than a minute ago: ")
+        finally:
+            await close(manager, router, sockets)
+
+    asyncio.run(scenario())
+
 def test_three_held_one_summary_one_tts_and_no_follow_up(tmp_path, no_area):
     async def scenario():
         app, _, manager, client, router, sockets = await setup(
