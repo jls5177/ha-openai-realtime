@@ -5,7 +5,6 @@ set -e
 OPENAI_API_KEY=$(bashio::config 'openai_api_key')
 INSTRUCTIONS=$(bashio::config 'instructions')
 PERSONALITY=$(bashio::config 'personality')
-TRANSCRIPTION_LANGUAGE=$(bashio::config 'transcription_language')
 
 # --- 🗣️ Model & voice ---
 OPENAI_MODEL=$(bashio::config 'openai_model')
@@ -36,14 +35,9 @@ PLAYBACK_PREBUFFER_MS=$(bashio::config 'playback_prebuffer_ms')
 NOISE_REDUCTION=$(bashio::config 'noise_reduction')
 
 # --- 🏠 Home Assistant ---
-HA_MCP_URL=$(bashio::config 'ha_mcp_url')
-LONGLIVED_TOKEN=$(bashio::config 'longlived_token')
-MCP_TOOL_ALLOWLIST=$(bashio::config 'mcp_tool_allowlist')
-HOME_LOCATION=$(bashio::config 'home_location')
 
 # --- ⚙️ Advanced ---
 WEBSOCKET_PORT=$(bashio::config 'websocket_port')
-DEVICE_TOKEN=$(bashio::config 'device_token')
 DIAGNOSTICS_PORT=$(bashio::config 'diagnostics_port')
 SESSION_REUSE_TIMEOUT_SECONDS=$(bashio::config 'session_reuse_timeout_seconds')
 MAX_CONTEXT_MESSAGES=$(bashio::config 'max_context_messages')
@@ -51,7 +45,6 @@ TRANSCRIPTION_MODEL=$(bashio::config 'transcription_model')
 
 # --- 🔍 Debug ---
 ENABLE_RECORDING=$(bashio::config 'enable_recording')
-TAIL_DEVICE=$(bashio::config 'tail_device')
 
 # Validate required configuration
 if [ -z "$OPENAI_API_KEY" ]; then
@@ -63,7 +56,6 @@ fi
 export OPENAI_API_KEY
 export INSTRUCTIONS
 export PERSONALITY
-export TRANSCRIPTION_LANGUAGE
 export OPENAI_MODEL
 export OPENAI_VOICE
 export OPENAI_SPEED
@@ -82,17 +74,12 @@ export ANNOUNCEMENT_CHIME
 export ENABLE_TIMERS
 export PLAYBACK_PREBUFFER_MS
 export NOISE_REDUCTION
-export LONGLIVED_TOKEN
-export MCP_TOOL_ALLOWLIST
-export HOME_LOCATION
 export WEBSOCKET_PORT
-export DEVICE_TOKEN
 export DIAGNOSTICS_PORT
 export SESSION_REUSE_TIMEOUT_SECONDS
 export MAX_CONTEXT_MESSAGES
 export TRANSCRIPTION_MODEL
 export ENABLE_RECORDING
-export TAIL_DEVICE
 
 # The *_custom escape hatches (🗣️/🌐/⚙️) are optional WITHOUT defaults —
 # bashio::config prints "null" for unset optionals, and main.py's
@@ -145,10 +132,14 @@ fi
 # over: SEMANTIC_VAD_CREATE_RESPONSE=true, ENABLE_DISCONNECT_TOOL=false,
 # DEVICE_INPUT_SAMPLE_RATE=16000.
 
-# Export HA_MCP_URL if set (empty string means use default in main.py)
-if [ -n "$HA_MCP_URL" ]; then
-    export HA_MCP_URL
-fi
+# Optional text options (blank = unset). bashio::config prints "null" for
+# unset optionals, so export only real values; main.py treats absent as "".
+for opt in transcription_language ha_mcp_url longlived_token mcp_tool_allowlist home_location device_token tail_device; do
+    if bashio::config.has_value "${opt}"; then
+        var=$(echo "${opt}" | tr '[:lower:]' '[:upper:]')
+        export "${var}=$(bashio::config "${opt}")"
+    fi
+done
 
 # SUPERVISOR_TOKEN is automatically provided by Home Assistant when homeassistant_api: true
 if bashio::services.available "mqtt"; then

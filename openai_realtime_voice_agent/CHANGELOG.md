@@ -2,6 +2,13 @@
 
 All notable changes to this add-on. Newest first.
 
+## 0.6.5-sat.10
+
+- Fix "Failed to save: Missing option 'tail_device'" when you change any
+  setting. Blank text options (`tail_device`, `device_token`, `home_location`,
+  `ha_mcp_url`, `longlived_token`, `mcp_tool_allowlist`) are now optional, so
+  the configuration saves with them left empty.
+
 ## 0.6.4-sat.9
 
 - **Multiple satellites from one add-on.**

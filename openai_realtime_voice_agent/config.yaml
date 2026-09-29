@@ -1,5 +1,5 @@
 name: OpenAI Realtime 2 Voice Agent
-version: "0.6.4-sat.9"
+version: "0.6.5-sat.10"
 slug: openai_realtime_voice_agent
 description: Talk to your home with OpenAI gpt-realtime-2 — a voice agent for the Home Assistant Voice PE, with live device control and web search.
 url: https://github.com/xandervanerven/ha-openai-realtime
@@ -38,6 +38,9 @@ map:
 # configuration options" toggle on fresh installs. Same trick (v0.4.30) for
 # the four *_custom escape-hatch fields: optional, no default, hidden until
 # needed (the dropdown descriptions tell users how to reveal them).
+# Every option whose default is "" must be optional (`str?`/`password?`).
+# The UI drops blank text fields when saving, so a required blank option
+# fails the save with "Missing option" (tests/test_config_options.py).
 # NB the add-on UI renders every string option as a SINGLE-LINE input — there
 # is no multiline/textarea support in the frontend (verified in
 # supervisor-app-config.ts), so long text like `instructions` is best edited
@@ -160,13 +163,13 @@ schema:
   playback_prebuffer_ms: int(0,2000)
   noise_reduction: "list(off|near_field|far_field)"
   # --- 🏠 Home Assistant ---
-  ha_mcp_url: str
-  longlived_token: password
-  mcp_tool_allowlist: str
-  home_location: str
+  ha_mcp_url: str?
+  longlived_token: password?
+  mcp_tool_allowlist: str?
+  home_location: str?
   # --- ⚙️ Advanced ---
   websocket_port: int(1024,65535)
-  device_token: password
+  device_token: password?
   diagnostics_port: int(0,65535)
   session_reuse_timeout_seconds: int(0,3600)
   max_context_messages: int(0,100)
@@ -180,7 +183,7 @@ schema:
   vad_silence_duration_ms: int?
   # --- 🔍 Debug ---
   enable_recording: bool
-  tail_device: str
+  tail_device: str?
 # No `image:` key -> Home Assistant builds the add-on locally from the
 # Dockerfile in this directory (see build.yaml). This makes the fork work
 # without publishing images to a registry. Advanced users who prefer fast
