@@ -22,6 +22,9 @@ from test_multi_satellites import MAC1, MAC2, StubApp, connect, ready, no_area
 
 
 def test_fact_guard_and_follow_up(caplog):
+    assert not fact_guard("Alice is at the front door.", "Bob is at the front door.")[0]
+    assert not fact_guard("Dr. Jones is here.", "Dr. Smith is here.")[0]
+    assert not fact_guard("The range is 5-10.", "The range is 5-12.")[0]
     assert fact_guard("Meet Alex at 7:30 with 20.5% for Mr Smith.", "Alex, Mr Smith: 20.5% at 7:30.")[0]
     assert not fact_guard("Meet Alex at 7:30 with 20.5%.", "Meet Alex at 7:30.")[0]
     assert not fact_guard("Bring 2 and 2 boxes.", "Bring 2 boxes.")[0]
@@ -289,7 +292,21 @@ def test_busy_retry_timeout_stale_and_caps(tmp_path, no_area, monkeypatch):
             assert not registry.get(MAC1).session._announcement_reply.done()
             await socket.send(json.dumps({"type": "announce_busy", "id": request["id"]}))
             await asyncio.sleep(.1)
-            assert registry.get(MAC1).session._announcement_id == job.id
+            session = registry.get(MAC1).session
+            assert session._announcement_id == job.id
+            assert not session.announcement_active
+            assert not session.openai_service.announcement_active
+            before = len(session.openai_service.events)
+            await socket.send(json.dumps({"type": "interrupt"}))
+            for _ in range(30):
+                if len(session.openai_service.events) > before:
+                    break
+                await asyncio.sleep(.01)
+            assert len(session.openai_service.events) > before
+            assert type(session.openai_service.events[-1]).__name__ == "InputAudioBufferClearEvent"
+            callback = session.openai_service.event_handlers["on_conversation_item_created"]
+            await callback(session.openai_service, "post-stop", SimpleNamespace(role="assistant"))
+            assert type(session.openai_service.events[-1]).__name__ == "ResponseCancelEvent"
             assert manager._reply is not None
             assert await manager.submit("Different", [MAC1]) is not None
             for n in range(3):
@@ -334,6 +351,12 @@ def test_device_cancel_interrupts_queued_pcm_and_reconnect(tmp_path, no_area):
         client.pcm = b"\x10\x00" * (24000 * 4)
         session = registry.get(MAC1).session
         session.openai_service._messages_added_manually = {}
+        errors = []
+
+        async def record(error):
+            errors.append(error)
+
+        manager.failure = record
         queued = []
         original_queue = session.queue_frames
 
@@ -369,6 +392,135 @@ def test_device_cancel_interrupts_queued_pcm_and_reconnect(tmp_path, no_area):
             assert registry.get(MAC1).session is None
             assert not session.announcement_active
             assert not manager.dispatchers
+            assert not manager.pending[MAC1]
+            assert session.context.get_messages()[-1]["content"] == "(interrupted) " + next_job.spoken
+            assert any("interrupted by disconnect" in error for error in errors)
+        finally:
+            await close(manager, router, sockets)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("takeover", [False, True])
+def test_pre_audio_job_survives_reconnect(tmp_path, no_area, takeover):
+    async def scenario():
+        app, registry, manager, fake, router, sockets = await setup(tmp_path, no_area)
+        original = sockets[0]
+        failures = []
+
+        async def record(error):
+            failures.append(error)
+
+        manager.failure = record
+        try:
+            job = await manager.submit("Hello Alex at 7:30.", [MAC1])
+            assert (await next_type(original, "announce"))["id"] == job.id
+            if takeover:
+                replacement = await connect(router, MAC1, "Kitchen")
+                sockets.append(replacement)
+                await original.wait_closed()
+            else:
+                await original.close()
+                for _ in range(100):
+                    if registry.get(MAC1).session is None:
+                        break
+                    await asyncio.sleep(.01)
+                assert registry.get(MAC1).session is None
+                replacement = await connect(router, MAC1, "Kitchen")
+                sockets.append(replacement)
+            assert json.loads(await replacement.recv())["type"] == "hello"
+            await ready(registry, 1)
+            assert job in manager.pending[MAC1] and MAC1 in job.remaining
+            assert (await next_type(replacement, "announce"))["id"] == job.id
+            assert not failures
+            new_session = registry.get(MAC1).session
+            new_session.openai_service._messages_added_manually = {}
+            await replacement.send(json.dumps({"type": "announce_ready", "id": job.id}))
+            assert await next_audio(replacement)
+            await replacement.send(json.dumps({"type": "announce_done", "id": job.id}))
+            for _ in range(100):
+                if job not in manager.pending[MAC1]:
+                    break
+                await asyncio.sleep(.01)
+            assert job not in manager.pending[MAC1]
+            assert (fake.compositions, fake.speeches) == (1, 1)
+        finally:
+            await close(manager, router, sockets)
+
+    asyncio.run(scenario())
+
+
+def test_audio_batches_keep_absolute_half_second_lead(tmp_path, no_area):
+    async def scenario():
+        app, registry, manager, fake, router, sockets = await setup(tmp_path, no_area)
+        fake.pcm = b"\x10\x00" * (24000 * 2)
+        socket = sockets[0]
+        session = registry.get(MAC1).session
+        session.openai_service._messages_added_manually = {}
+        batches = []
+        original_queue = session.queue_frames
+
+        async def record(frames):
+            if any(isinstance(frame, TTSAudioRawFrame) for frame in frames):
+                batches.append(time.monotonic())
+            await original_queue(frames)
+
+        session.queue_frames = record
+        manager.failure = lambda error: asyncio.sleep(0)
+        try:
+            job = await manager.submit("Hello Alex at 7:30.", [MAC1])
+            assert (await next_type(socket, "announce"))["id"] == job.id
+            assert not session.announcement_active
+            await socket.send(json.dumps({"type": "announce_ready", "id": job.id}))
+            for _ in range(100):
+                if len(batches) >= 3:
+                    break
+                await asyncio.sleep(.01)
+            assert len(batches) >= 3
+            assert session.announcement_active and session.openai_service.announcement_active
+            assert batches[1] - batches[0] < .23
+            assert batches[2] - batches[0] < .42
+        finally:
+            await close(manager, router, sockets)
+
+    asyncio.run(scenario())
+
+
+def test_delivery_error_after_pcm_records_interruption(tmp_path, no_area):
+    async def scenario():
+        app, registry, manager, fake, router, sockets = await setup(tmp_path, no_area)
+        fake.pcm = b"\x10\x00" * (24000 * 2)
+        socket = sockets[0]
+        session = registry.get(MAC1).session
+        session.openai_service._messages_added_manually = {}
+        frames_sent = 0
+        original_queue = session.queue_frames
+        errors = []
+
+        async def fail_second_audio_batch(frames):
+            nonlocal frames_sent
+            if any(isinstance(frame, TTSAudioRawFrame) for frame in frames):
+                frames_sent += 1
+                if frames_sent == 2:
+                    raise ConnectionError("PCM writer failed")
+            await original_queue(frames)
+
+        async def record(error):
+            errors.append(error)
+
+        session.queue_frames = fail_second_audio_batch
+        manager.failure = record
+        try:
+            job = await manager.submit("Hello Alex at 7:30.", [MAC1])
+            assert (await next_type(socket, "announce"))["id"] == job.id
+            await socket.send(json.dumps({"type": "announce_ready", "id": job.id}))
+            for _ in range(100):
+                if job not in manager.pending[MAC1]:
+                    break
+                await asyncio.sleep(.01)
+            assert job not in manager.pending[MAC1]
+            assert session.context.get_messages()[-1]["content"] == "(interrupted) " + job.spoken
+            assert any("PCM writer failed" in error for error in errors)
         finally:
             await close(manager, router, sockets)
 

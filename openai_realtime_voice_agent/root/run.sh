@@ -24,7 +24,6 @@ INTERRUPT_RESPONSE=$(bashio::config 'interrupt_response')
 # --- 🌐 Web search ---
 ENABLE_WEB_SEARCH=$(bashio::config 'enable_web_search')
 WEB_SEARCH_MODEL=$(bashio::config 'web_search_model')
-ANNOUNCEMENT_MODEL=$(bashio::config 'announcement_model')
 ANNOUNCEMENT_TTS_MODEL=$(bashio::config 'announcement_tts_model')
 MQTT_DISCOVERY=$(bashio::config 'mqtt_discovery')
 ANNOUNCEMENT_CHIME=$(bashio::config 'announcement_chime')
@@ -77,7 +76,6 @@ export PHASE_IDLE_DEBOUNCE_MS
 export INTERRUPT_RESPONSE
 export ENABLE_WEB_SEARCH
 export WEB_SEARCH_MODEL
-export ANNOUNCEMENT_MODEL
 export ANNOUNCEMENT_TTS_MODEL
 export MQTT_DISCOVERY
 export ANNOUNCEMENT_CHIME
@@ -111,6 +109,10 @@ fi
 if bashio::config.has_value 'web_search_model_custom'; then
     WEB_SEARCH_MODEL_CUSTOM=$(bashio::config 'web_search_model_custom')
     export WEB_SEARCH_MODEL_CUSTOM
+fi
+if bashio::config.has_value 'announcement_model'; then
+    ANNOUNCEMENT_MODEL=$(bashio::config 'announcement_model')
+    export ANNOUNCEMENT_MODEL
 fi
 if bashio::config.has_value 'transcription_model_custom'; then
     TRANSCRIPTION_MODEL_CUSTOM=$(bashio::config 'transcription_model_custom')

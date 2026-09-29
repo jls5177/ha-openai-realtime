@@ -21,9 +21,12 @@ from app.prompt_builder import VOICE_RULES
 logger = logging.getLogger(__name__)
 TTL = 300
 CHUNK = 1920  # 40 ms at 24 kHz, 16-bit mono.
-NUMBER = re.compile(r"(?<![\w+-])[-+]?\d+(?::\d+)*(?:\.\d+)?%?")
+NUMBER = re.compile(r"(?<!\w)[-+]?\d+(?::\d+)*(?:\.\d+)?%?")
 WORD = re.compile(r"\b[^\W\d_][\w'-]*\b", re.UNICODE)
-COMMON = {"i", "a", "the", "an", "on", "at", "in", "to", "for", "and", "but", "or", "it", "is"}
+COMMON = {
+    "i", "a", "the", "an", "on", "at", "in", "to", "for", "and", "but",
+    "or", "it", "is", "please", "meet", "bring", "call", "tell", "remind",
+}
 
 
 def fact_guard(original: str, composed: str) -> tuple[bool, str]:
@@ -32,11 +35,8 @@ def fact_guard(original: str, composed: str) -> tuple[bool, str]:
     for number, count in Counter(NUMBER.findall(original)).items():
         if output_numbers[number] < count:
             return False, f"missing number {number}"
-    first = {match.start() for match in WORD.finditer(original)
-             if not original[:match.start()].strip()
-             or re.search(r"[.!?]\s*$", original[:match.start()])}
     words = [m.group().casefold() for m in WORD.finditer(original)
-             if m.start() not in first and m.group()[0].isupper()
+             if m.group()[0].isupper()
              and m.group().casefold() not in COMMON]
     output = [m.group().casefold() for m in WORD.finditer(composed)]
     for word, count in Counter(words).items():
@@ -337,12 +337,22 @@ class AnnouncementManager:
         await session.send_json({"type": "announce_result", "ok": job is not None,
                                  **({"error": "Invalid or full announcement queue"} if job is None else {})})
 
+    async def _note_interrupted(self, session, job):
+        if session._announcement_noted:
+            return
+        try:
+            await append_assistant_note(session, "(interrupted) " + job.spoken)
+            session._announcement_noted = True
+        except Exception as exc:
+            await self.failure(f"{session.mac}: interrupted history note failed: {exc}")
+
     async def _dispatch(self, session):
         try:
             while True:
                 job = await session._announcement_queue.get()
                 if session.mac not in job.remaining:
                     continue
+                drop = True
                 try:
                     if "announce" not in session.caps:
                         raise ValueError("Satellite lacks announce capability")
@@ -355,15 +365,23 @@ class AnnouncementManager:
                         raise TimeoutError("Announcement expired")
                     await self._play(session, job)
                 except asyncio.CancelledError:
-                    if session._announcement_id == job.id:
-                        await self._cancel(session, job)
+                    if session._announcement_pcm_started:
+                        await self._note_interrupted(session, job)
+                        await self.failure(f"{session.mac}: announcement interrupted by disconnect")
+                    else:
+                        drop = False
                     raise
                 except Exception as exc:
+                    if session._announcement_pcm_started:
+                        await self._note_interrupted(session, job)
                     await self.failure(f"{session.mac}: {exc}")
                 finally:
-                    job.remaining.discard(session.mac)
-                    if job in self.pending.get(session.mac, []):
-                        self.pending[session.mac].remove(job)
+                    if drop:
+                        job.remaining.discard(session.mac)
+                        if job in self.pending.get(session.mac, []):
+                            self.pending[session.mac].remove(job)
+                    session._announcement_pcm_started = False
+                    session._announcement_noted = False
         except asyncio.CancelledError:
             raise
 
@@ -378,9 +396,6 @@ class AnnouncementManager:
     async def _play(self, session, job):
         session._announcement_id = job.id
         session._announcement_generation = session.generation
-        session.announcement_active = True
-        if session.openai_service is not None:
-            session.openai_service.announcement_active = True
         loop = asyncio.get_running_loop()
         try:
             while time.monotonic() - job.created < TTL:
@@ -401,9 +416,14 @@ class AnnouncementManager:
                     break
             else:
                 raise TimeoutError("Announcement expired while device busy")
+            session.announcement_active = True
+            if session.openai_service is not None:
+                session.openai_service.announcement_active = True
             session._announcement_reply = loop.create_future()
             await session.queue_frames([TTSStartedFrame()])
             interrupted = False
+            start = loop.time()
+            sent_bytes = 0
             for offset in range(0, len(job.pcm), CHUNK * 8):
                 if session._closed:
                     raise ConnectionError("Satellite disconnected during playback")
@@ -414,13 +434,17 @@ class AnnouncementManager:
                 frames = [TTSAudioRawFrame(audio=job.pcm[i:i + CHUNK],
                                            sample_rate=24000, num_channels=1)
                           for i in range(offset, min(offset + CHUNK * 8, len(job.pcm)), CHUNK)]
+                session._announcement_pcm_started = True
                 await session.queue_frames(frames)
-                await asyncio.sleep(len(frames) * .04)
+                sent_bytes += sum(len(frame.audio) for frame in frames)
+                await asyncio.sleep(max(0, start + sent_bytes / 48000 - .5 - loop.time()))
             if interrupted:
                 await self._cancel(session, job)
                 await append_assistant_note(session, "(interrupted) " + job.spoken)
+                session._announcement_noted = True
             else:
                 await append_assistant_note(session, job.spoken)
+                session._announcement_noted = True
                 await session.queue_frames([TTSStoppedFrame()])
             if not interrupted:
                 try:

@@ -172,8 +172,9 @@ Every option has a description on the **Configuration** tab. The ones worth know
 
 - **Model / voice / transcription model** are dropdowns with a **`custom`** entry +
   a `*_custom` text field if you want a value not in the list.
-- **Transcription / conversation memory:** with `max_context_messages` above zero
-  (default 12), input transcripts are auto-detected, logged as `🗣️ user: …`, and
+- **Transcription / conversation memory:** input transcripts are auto-detected
+  and logged as `🗣️ user: …` with both capped memory (default 12) and
+  `max_context_messages: 0` (unlimited). Recent user turns are
   restored alongside assistant turns after reconnects. Set `transcription_language`
   to pin a language; transcription does **not** change what the model understands
   — the main model hears your audio natively.

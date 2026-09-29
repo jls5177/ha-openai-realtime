@@ -1,6 +1,7 @@
 """Real Pipecat pipeline tasks over real websocket connections, without OpenAI I/O."""
 import asyncio
 import json
+from pathlib import Path
 from types import SimpleNamespace
 import time
 
@@ -28,14 +29,20 @@ class FakeRealtime(FrameProcessor):
         self._session_properties = SimpleNamespace(instructions=instructions)
         self._context = LLMContext()
         self._llm_needs_conversation_setup = False
+        self.announcement_active = False
         self.events = []
+        self.event_handlers = {}
         self.functions = {}
 
     def register_function(self, name, handler, *args, **kwargs):
         self.functions[name] = handler
 
     def event_handler(self, name):
-        return lambda callback: callback
+        def register(callback):
+            self.event_handlers[name] = callback
+            return callback
+
+        return register
 
     async def send_client_event(self, event):
         self.events.append(event)
@@ -301,9 +308,8 @@ def test_production_factory_creates_distinct_services(tmp_path, monkeypatch, no_
             assert one.handler.timer_bridge is not two.handler.timer_bridge
             assert "set_timer" in one.openai_service.functions
             transcription = one.openai_service._session_properties.audio.input.transcription
-            assert (transcription is not None) is (history_limit > 0)
-            if transcription:
-                assert transcription.language is None
+            assert transcription is not None
+            assert transcription.language is None
             assert app.session_manager.get_current_service(MAC1) is one.openai_service
             await first.close()
             await second.close()
@@ -341,6 +347,39 @@ def test_connection_limit_and_legacy_identity(tmp_path, no_area):
             await router.close()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize(
+    ("announcement_choice", "tts_choice", "expected"),
+    [("", "", "gpt-5-mini"), ("null", "null", "gpt-5-mini"),
+     ("gpt-5.5", "gpt-4o-mini-tts", "gpt-5.5")],
+)
+def test_optional_announcement_models(tmp_path, monkeypatch, announcement_choice, tts_choice, expected):
+    async def scenario():
+        monkeypatch.setenv("OPENAI_API_KEY", "fake")
+        monkeypatch.setenv("WEB_SEARCH_MODEL", "gpt-5-mini")
+        monkeypatch.setenv("ANNOUNCEMENT_MODEL", announcement_choice)
+        monkeypatch.setenv("ANNOUNCEMENT_TTS_MODEL", tts_choice)
+        monkeypatch.setenv("SATELLITES_PATH", str(tmp_path / "devices.json"))
+        monkeypatch.delenv("SUPERVISOR_TOKEN", raising=False)
+        monkeypatch.delenv("LONGLIVED_TOKEN", raising=False)
+        app = Application()
+        await app.initialize()
+        try:
+            assert app.announcement_model == expected
+            assert app.announcement_tts_model == "gpt-4o-mini-tts"
+        finally:
+            await app.announcements.close()
+
+    asyncio.run(scenario())
+
+
+def test_optional_announcement_model_export_is_guarded():
+    run = (Path(__file__).resolve().parents[1] / "root" / "run.sh").read_text()
+    guard = "if bashio::config.has_value 'announcement_model'; then"
+    export = "ANNOUNCEMENT_MODEL=$(bashio::config 'announcement_model')"
+    assert guard in run
+    assert run.index(guard) < run.index(export) < run.index("\nfi\n", run.index(guard))
 
 
 def test_overlapping_takeovers_preserve_history(tmp_path, no_area):

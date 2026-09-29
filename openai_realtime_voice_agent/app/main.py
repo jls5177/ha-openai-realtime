@@ -416,8 +416,14 @@ class Application:
         web_search_model = _resolve_choice(
             "WEB_SEARCH_MODEL", "WEB_SEARCH_MODEL_CUSTOM", "gpt-5.5"
         )
-        announcement_model = os.environ.get("ANNOUNCEMENT_MODEL", "").strip() or web_search_model
-        announcement_tts_model = os.environ.get("ANNOUNCEMENT_TTS_MODEL", "gpt-4o-mini-tts").strip()
+        announcement_choice = os.environ.get("ANNOUNCEMENT_MODEL", "").strip()
+        announcement_model = (
+            web_search_model if announcement_choice.lower() in ("", "null") else announcement_choice
+        )
+        tts_choice = os.environ.get("ANNOUNCEMENT_TTS_MODEL", "").strip()
+        announcement_tts_model = (
+            "gpt-4o-mini-tts" if tts_choice.lower() in ("", "null") else tts_choice
+        )
 
         # Get recording setting (optional, defaults to false)
         enable_recording = os.environ.get("ENABLE_RECORDING", "false").lower() == "true"
@@ -708,8 +714,6 @@ class Application:
                 model=self.transcription_model,
                 language=self.transcription_language or None,
             )
-            if self.transcription_language or self.max_context_messages > 0
-            else None
         )
 
         # Optional near/far-field input noise reduction (helps the VAD reject

@@ -147,6 +147,8 @@ class DeviceSession:
         self._announcement_id = None
         self._announcement_generation = None
         self.announcement_active = False
+        self._announcement_pcm_started = False
+        self._announcement_noted = False
         self.kill_exempt_ids = set()
         self._writes = asyncio.Queue(maxsize=128)
         self._writer_task = asyncio.create_task(self._write_loop(), name=f"ws-writer:{mac}")
